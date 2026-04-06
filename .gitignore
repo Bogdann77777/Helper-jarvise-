@@ -1,0 +1,49 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Claude Code internals
+.claude/
+
+# Env
+.env
+*.env
+
+# Logs
+*.log
+logs/
+
+# Runtime state
+buffer_store.json
+tg_inbox.json
+nul
+
+# Database
+tasks.db
+
+# Generated content
+outputs/
+static/audio/
+static/uploads/
+
+# Backups
+*.bak
+*.bak_*
+
+# Voices (user audio samples — privacy)
+voices/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+STOP_VAST_MONITOR
+_restart_tmp.bat

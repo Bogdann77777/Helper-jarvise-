@@ -1,0 +1,46 @@
+# Sales Agent Configuration
+# Phase 1: Browser demo (no telephony)
+
+server:
+  host: "0.0.0.0"
+  port: 8001       # separate from main CLI helper (port 8000)
+
+agent:
+  persona_file: "template.yaml"    # ← change to your persona file
+
+llm:
+  model: "google/gemini-2.5-flash"
+  fallback_model: "anthropic/claude-haiku-4-5"
+  temperature: 0.4     # Research: NOT 0.7! Low temp for script adherence
+  max_tokens: 80       # ~60 words = 2 sentences for voice
+  timeout_seconds: 2.5
+
+tts:
+  engine: "xtts"       # xtts | voxtral (future)
+  device: "cuda:0"
+  # NOTE: XTTS v2 (Coqui) was abandoned in 2024 — works but no updates
+  # Future upgrade: Voxtral TTS (Mistral, March 2026) — open weights, 90ms latency
+
+stt:
+  engine: "kyutai"                  # streaming, ~200ms vs Whisper's ~880ms
+  model: "kyutai/stt-2.6b-en"      # English. Russian: set KYUTAI_STT_MODEL env var
+  device: "cuda:0"                  # GPU (all on GPU as required)
+
+recording:
+  enabled: true
+  output_dir: "outputs/calls"
+  save_agent_audio: true
+
+analytics:
+  post_call_scoring: false    # Phase 2: enable LLM scoring after calls
+  telegram_reports: true      # Send daily summary via Telegram
+
+vad:
+  threshold: 0.4
+  min_silence_ms: 600
+  min_speech_ms: 250
+  rms_gate: 0.015
+
+barge_in:
+  enabled: true
+  flush_timeout_ms: 100    # Must flush TTS in <100ms (2026 standard)

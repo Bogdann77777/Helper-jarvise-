@@ -1,0 +1,114 @@
+=== AGENT OPERATING RULES: DEBUG & GOAL TRACKING SYSTEM ===
+
+RULE 0 — BEFORE EVERY RESPONSE:
+Call agent_memory.get_context_for_agent(project_path) and read the output fully.
+If you skip this step, you WILL repeat failed attempts. There are no exceptions.
+This call also marks the project as acknowledged — removing the Edit/Write block from enforce_memory.py.
+
+RULE 1 — BEFORE ANY DEBUGGING ATTEMPT:
+1. Read the DO NOT TRY section. If your planned action is listed there, STOP.
+   Pick a different approach or state that all obvious approaches are exhausted.
+2. Read the Research Filter. Limit all web searches to Search ONLY topics.
+3. Write your Hypothesis BEFORE making any code change.
+   Format: "I believe X is the cause because Y. Confidence: HIGH/MEDIUM/LOW."
+   If you cannot form a hypothesis, say so explicitly instead of making random changes.
+
+RULE 2 — AFTER EVERY ATTEMPT:
+Call add_attempt() or add_change() with honest results.
+Do NOT skip this even if the attempt was quick.
+Do NOT write "will update later". Update immediately.
+
+RULE 3 — RESEARCH DISCIPLINE:
+When searching for solutions, your search queries MUST be derived from
+the Research Filter in the active map. Discard any search results that
+are about topics in "Do NOT research".
+Call get_research_brief(current_problem, project_path) BEFORE formulating any search query.
+
+RULE 4 — LOOP DETECTION:
+If you find yourself proposing an action that is semantically equivalent
+to a DO NOT TRY item (even with different wording), STOP.
+State: "LOOP DETECTED: [description]. Escalating to human."
+Do not proceed without human confirmation.
+
+RULE 5 — WHICH MAP TO USE:
+- Use debug-map.md when: there is an error, exception, crash, or import failure.
+- Use goal-map.md when: code runs without error but produces wrong results.
+- Use BOTH when: code crashes AND the expected behavior is unclear.
+
+RULE 6 — ARCHIVING:
+When a problem is solved, call archive_and_reset(project_path, 'slug') before starting the next task.
+Never leave a RESOLVED/ACHIEVED map open as the active file.
+add_attempt(result="SUCCESS") and mark_goal_achieved() print a reminder automatically.
+
+RULE 7 — DIRECTIONAL ANALYSIS:
+After every 3 changes in goal-map, call update_directional_analysis() to update:
+- Pattern Toward Goal / Pattern Away from Goal
+- Research Filter (Search ONLY / Do NOT research)
+- Hypothesis Queue (ranked by confidence)
+
+=== END AGENT OPERATING RULES ===
+
+
+=== QUICK REFERENCE: agent_memory.py ===
+
+Import:
+    import sys; sys.path.insert(0, "E:/project/ceo 2.0/cli helper")
+    from agent_memory import (
+        get_context_for_agent, get_research_brief,
+        init_debug_map, init_goal_map,
+        add_attempt, add_change, update_directional_analysis,
+        mark_goal_achieved, archive_and_reset
+    )
+
+Activate project (Rule 0 — also removes Edit/Write block):
+    print(get_context_for_agent("E:/path/to/project"))
+
+Before web research (Rule 3):
+    print(get_research_brief("exact problem", "E:/path/to/project"))
+
+New debug session:
+    init_debug_map("E:/path/to/project",
+        error_type="ImportError",
+        error_message="exact error text",
+        error_location="file.py:42",
+        environment="Python 3.11, Windows 11, torch 2.7.1",
+        reproduction_steps=["step 1", "step 2"]
+    )
+
+Log attempt (Rule 2):
+    add_attempt("E:/path/to/project",
+        attempt_number=1,
+        hypothesis="X is broken because Y",
+        hypothesis_confidence="HIGH",  # HIGH | MEDIUM | LOW
+        action_taken="Changed foo to bar in file.py",
+        files_modified=["file.py"],
+        result="FAILED",              # SUCCESS | FAILED | PARTIAL
+        failure_reason="Still crashes",
+        new_information="Issue is upstream",
+        ruled_out="Changing foo doesn't affect the error path"
+    )
+
+Log change in goal-map (Rule 2):
+    add_change("E:/path/to/project",
+        change_number=1,
+        change_description="Reduced beam_size 5->1",
+        expected_effect="Faster STT, lower latency",
+        actual_result="Latency dropped from 8s to 4s",
+        direction="toward"  # toward | away | neutral
+    )
+
+Directional analysis every 3 changes (Rule 7):
+    update_directional_analysis("E:/path/to/project",
+        pattern_toward="Reducing chunk duration consistently improves latency",
+        pattern_away="Changing model size has no effect",
+        current_best_direction="Focus on VAD parameters",
+        search_only="faster-whisper VAD min_silence_duration_ms latency",
+        do_not_research="model quantization, XTTS speed",
+        hypothesis_queue=[
+            ("HIGH", "VAD min_silence 2000->700ms saves 1.3s"),
+            ("MEDIUM", "Add semantic buffer for LLM context"),
+        ]
+    )
+
+Archive when done (Rule 6):
+    archive_and_reset("E:/path/to/project", "short-slug-describing-what-was-solved")

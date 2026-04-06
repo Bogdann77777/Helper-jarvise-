@@ -1,0 +1,4120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Voice</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f13;
+      color: #e8e8f0;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ===== HEADER ===== */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: #1a1a24;
+      border-bottom: 1px solid #2a2a3a;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+
+    .logo {
+      font-size: 16px;
+      font-weight: 700;
+      color: #a78bfa;
+      white-space: nowrap;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Режим переключатель */
+    .mode-toggle {
+      display: flex;
+      background: #0f0f13;
+      border-radius: 8px;
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .mode-btn {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: transparent;
+      color: #666;
+    }
+
+    .mode-btn.active {
+      background: #a78bfa;
+      color: #0f0f13;
+    }
+
+    /* Кнопка открытия панели голосов */
+    #voices-toggle-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: #1e1e2e;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      color: #e8e8f0;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      white-space: nowrap;
+    }
+
+    #voices-toggle-btn:hover { border-color: #a78bfa; }
+    #voices-toggle-btn.open { border-color: #a78bfa; background: #2a1a4e; }
+
+    #new-chat-btn {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      color: #666;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    #new-chat-btn:hover { border-color: #e55; color: #e55; }
+
+    .voice-icon { font-size: 15px; }
+    #current-voice-label { color: #a78bfa; font-weight: 600; }
+
+    /* ===== ОСНОВНАЯ ОБЛАСТЬ ===== */
+    .main-wrap {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ===== ПАНЕЛЬ ГОЛОСОВ (боковая) ===== */
+    #voices-panel {
+      width: 260px;
+      background: #13131c;
+      border-right: 1px solid #2a2a3a;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      transform: translateX(-100%);
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      z-index: 5;
+      transition: transform 0.25s ease;
+    }
+
+    #voices-panel.open {
+      transform: translateX(0);
+    }
+
+    /* На широких экранах панель не перекрывает чат, а сдвигает */
+    @media (min-width: 700px) {
+      #voices-panel {
+        position: relative;
+        transform: translateX(-260px);
+        margin-left: -260px;
+        transition: transform 0.25s ease, margin-left 0.25s ease;
+      }
+      #voices-panel.open {
+        transform: translateX(0);
+        margin-left: 0;
+      }
+    }
+
+    .panel-header {
+      padding: 16px;
+      border-bottom: 1px solid #2a2a3a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #a78bfa;
+    }
+
+    .panel-close {
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .panel-close:hover { color: #e8e8f0; background: #2a2a3a; }
+
+    /* Список голосов */
+    .voices-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .voices-list::-webkit-scrollbar { width: 3px; }
+    .voices-list::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    .voice-item {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #2a2a3a;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .voice-item:hover { border-color: #4a3a6a; background: #1e1e2e; }
+
+    .voice-item.active {
+      border-color: #a78bfa;
+      background: #2a1a4e;
+    }
+
+    .voice-avatar {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: #2a2a3a;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .voice-item.active .voice-avatar {
+      background: #4a1a8e;
+    }
+
+    .voice-info { flex: 1; min-width: 0; }
+
+    .voice-name {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+
+    .voice-desc {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+
+    .voice-check {
+      color: #a78bfa;
+      font-size: 16px;
+      display: none;
+    }
+
+    .voice-item.active .voice-check { display: block; }
+
+    .panel-hint {
+      padding: 12px 14px;
+      border-top: 1px solid #2a2a3a;
+      font-size: 11px;
+      color: #555;
+      line-height: 1.5;
+    }
+
+    .panel-hint code {
+      background: #1e1e2e;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: #888;
+    }
+
+    /* ===== CHAT AREA ===== */
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    #chat::-webkit-scrollbar { width: 4px; }
+    #chat::-webkit-scrollbar-track { background: transparent; }
+    #chat::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 85%;
+      gap: 6px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.claude { align-self: flex-start; align-items: flex-start; }
+
+    .msg-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .msg-bubble {
+      padding: 10px 14px;
+      border-radius: 14px;
+      line-height: 1.5;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .msg-bubble {
+      background: #4c1d95;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.claude .msg-bubble {
+      background: #1e1e2e;
+      border: 1px solid #2a2a3a;
+      border-bottom-left-radius: 4px;
+    }
+
+    /* Аудио плеер */
+    .msg-audio {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #16161e;
+      border: 1px solid #2a2a3a;
+      border-radius: 10px;
+    }
+
+    .play-btn {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: none;
+      background: #a78bfa;
+      color: #0f0f13;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .play-btn:hover { background: #8b5cf6; }
+    .play-btn.playing { background: #6d28d9; }
+
+    .audio-progress {
+      flex: 1;
+      height: 3px;
+      background: #2a2a3a;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+
+    .audio-progress-bar {
+      height: 100%;
+      background: #a78bfa;
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.1s;
+    }
+
+    .audio-time {
+      font-size: 11px;
+      color: #666;
+      white-space: nowrap;
+    }
+
+    /* Copy button under messages */
+    .msg-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .msg-copy-btn {
+      background: transparent;
+      border: 1px solid #2a2a3a;
+      color: #666;
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .msg-copy-btn:hover { color: #a78bfa; border-color: #a78bfa; }
+    .msg-copy-btn.copied { color: #22c55e; border-color: #22c55e; }
+
+    /* ===== СТАТУС ===== */
+    #status-bar {
+      padding: 8px 20px;
+      background: #1a1a24;
+      border-top: 1px solid #2a2a3a;
+      border-bottom: 1px solid #2a2a3a;
+      font-size: 13px;
+      color: #888;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .progress-bar-wrap {
+      flex: 1;
+      height: 3px;
+      background: #2a2a3a;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: #a78bfa;
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+
+    /* ===== НИЖНЯЯ ПАНЕЛЬ ===== */
+    #bottom {
+      padding: 14px 20px;
+      background: #1a1a24;
+      flex-shrink: 0;
+    }
+
+    /* Live режим */
+    #live-controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #visualizer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      height: 40px;
+    }
+
+    .bar {
+      width: 4px;
+      background: #a78bfa;
+      border-radius: 2px;
+      transition: height 0.05s;
+      min-height: 4px;
+    }
+
+    .live-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #mic-btn {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: 3px solid #a78bfa;
+      background: transparent;
+      color: #a78bfa;
+      font-size: 28px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #mic-btn.recording {
+      background: #a78bfa;
+      color: #0f0f13;
+      box-shadow: 0 0 0 8px rgba(167,139,250,0.15);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 8px rgba(167,139,250,0.15); }
+      50%       { box-shadow: 0 0 0 16px rgba(167,139,250,0.05); }
+    }
+
+    #silence-timer {
+      font-size: 28px;
+      font-weight: 700;
+      color: #a78bfa;
+      min-width: 40px;
+      text-align: center;
+      display: none;
+    }
+
+    #auto-live-btn {
+      padding: 8px 14px;
+      border-radius: 20px;
+      border: 2px solid #444;
+      background: transparent;
+      color: #666;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #auto-live-btn.active {
+      border-color: #22c55e;
+      color: #22c55e;
+      background: rgba(34,197,94,0.1);
+      animation: autolivepulse 2s infinite;
+    }
+    @keyframes autolivepulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.2); }
+      50%       { box-shadow: 0 0 0 8px rgba(34,197,94,0.0); }
+    }
+
+    /* Step режим */
+    #step-controls {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #transcript-input {
+      width: 100%;
+      background: #0f0f13;
+      border: 1px solid #2a2a3a;
+      border-radius: 10px;
+      color: #e8e8f0;
+      padding: 10px 14px;
+      font-size: 14px;
+      resize: none;
+      outline: none;
+      line-height: 1.5;
+      min-height: 56px;
+      max-height: 160px;
+    }
+
+    #transcript-input:focus { border-color: #a78bfa; }
+
+    .step-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    #record-btn-step {
+      padding: 10px 16px;
+      background: #1e1e2e;
+      border: 1px solid #2a2a3a;
+      border-radius: 10px;
+      color: #a78bfa;
+      font-size: 18px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex; align-items: center;
+    }
+
+    #record-btn-step.recording {
+      background: #a78bfa;
+      color: #0f0f13;
+      border-color: #a78bfa;
+    }
+
+    #send-btn {
+      flex: 1;
+      padding: 10px 20px;
+      background: #a78bfa;
+      border: none;
+      border-radius: 10px;
+      color: #0f0f13;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #send-btn:hover { background: #8b5cf6; }
+    #send-btn:active { background: #7c3aed; transform: scale(0.97); }
+    #send-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    #stop-btn {
+      flex: 1;
+      padding: 10px 20px;
+      background: #dc2626;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: none;
+      transition: background 0.2s;
+    }
+    #stop-btn:hover { background: #b91c1c; }
+    #stop-btn:active { background: #991b1b; transform: scale(0.97); }
+
+    /* ===== ВЛОЖЕНИЯ ===== */
+    #attachment-bar {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: #1e1e2e;
+      border-radius: 10px;
+      border: 1px solid rgba(167,139,250,0.35);
+      margin-bottom: 10px;
+    }
+
+    #attachment-preview {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      font-size: 13px;
+      color: #e8e8f0;
+      overflow: hidden;
+    }
+
+    #attachment-preview img {
+      height: 48px;
+      border-radius: 6px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    #attachment-preview .fname {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .attach-clear {
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .attach-clear:hover { color: #e55; }
+
+    .attach-btn {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      border: 1px solid #2a2a3a;
+      background: #1e1e2e;
+      color: #e8e8f0;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.2s, background 0.2s;
+      flex-shrink: 0;
+    }
+    .attach-btn:hover { border-color: #a78bfa; }
+    .attach-btn.has-file { border-color: #a78bfa; background: rgba(167,139,250,0.15); }
+
+    #camera-live-btn.cam-active { border-color: #4ade80; background: rgba(74,222,128,0.12); color: #4ade80; }
+    #camera-preview-wrap {
+      display: none;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #2a2a3a;
+      margin-top: 4px;
+      position: relative;
+    }
+    #camera-preview-wrap.visible { display: block; }
+    #camera-preview { width: 160px; height: 120px; object-fit: cover; display: block; }
+    #camera-switch-btn {
+      position: absolute; bottom: 4px; right: 4px;
+      background: rgba(0,0,0,0.6); border: none; border-radius: 6px;
+      color: #fff; font-size: 16px; cursor: pointer; padding: 2px 5px;
+      line-height: 1;
+    }
+    #camera-switch-btn:hover { background: rgba(80,80,200,0.7); }
+
+    /* ===== BOARD MODE ===== */
+    #board-view {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    #board-view::-webkit-scrollbar { width: 4px; }
+    #board-view::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+
+    /* Data Gate Form */
+    .board-form {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 14px;
+      padding: 20px;
+    }
+
+    .board-form h2 {
+      font-size: 16px;
+      color: #a78bfa;
+      margin-bottom: 16px;
+      font-weight: 700;
+    }
+
+    .form-section {
+      margin-bottom: 14px;
+    }
+
+    .form-section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    @media (max-width: 600px) {
+      .form-grid { grid-template-columns: 1fr; }
+    }
+
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .form-field.full { grid-column: 1 / -1; }
+
+    .form-field label {
+      font-size: 12px;
+      color: #888;
+      font-weight: 500;
+    }
+
+    .form-field label .req { color: #e55; }
+
+    .form-field input,
+    .form-field textarea {
+      background: #0f0f13;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      color: #e8e8f0;
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .form-field input:focus,
+    .form-field textarea:focus { border-color: #a78bfa; }
+
+    .form-field textarea { resize: vertical; min-height: 60px; }
+
+    .form-field input.error,
+    .form-field textarea.error { border-color: #e55; }
+
+    .form-errors {
+      color: #e55;
+      font-size: 12px;
+      margin-top: 8px;
+      display: none;
+    }
+
+    #board-submit-btn {
+      width: 100%;
+      padding: 12px;
+      margin-top: 14px;
+      background: #a78bfa;
+      border: none;
+      border-radius: 10px;
+      color: #0f0f13;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #board-submit-btn:hover { background: #8b5cf6; }
+    #board-submit-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    /* Board Progress */
+    .board-progress {
+      display: none;
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 14px;
+      padding: 16px 20px;
+    }
+
+    .board-progress h3 {
+      font-size: 14px;
+      color: #a78bfa;
+      margin-bottom: 12px;
+    }
+
+    .progress-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .progress-step.active { color: #a78bfa; }
+    .progress-step.done { color: #4ade80; }
+    .progress-step.error { color: #e55; }
+
+    .step-icon {
+      width: 20px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #a78bfa;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    /* Director Cards */
+    .director-cards {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .director-card {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 14px;
+      padding: 16px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .director-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .director-role {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .director-role.cso { color: #60a5fa; }
+    .director-role.cfo { color: #4ade80; }
+    .director-role.cto { color: #f472b6; }
+
+    .director-model {
+      font-size: 11px;
+      color: #555;
+    }
+
+    .director-duration {
+      font-size: 11px;
+      color: #555;
+    }
+
+    .director-summary {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #ccc;
+      margin-bottom: 10px;
+    }
+
+    /* Verification Tags */
+    .tagged-statements {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .tagged-stmt {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .tag-badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .tag-FACT { background: #166534; color: #4ade80; }
+    .tag-ASSUMPTION { background: #854d0e; color: #facc15; }
+    .tag-ESTIMATE { background: #1e3a5f; color: #60a5fa; }
+    .tag-DISPUTED { background: #7f1d1d; color: #f87171; }
+
+    .stmt-confidence {
+      font-size: 10px;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    .director-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 8px 0 4px;
+    }
+
+    .director-list {
+      list-style: none;
+      padding: 0;
+      font-size: 12px;
+      color: #bbb;
+      line-height: 1.5;
+    }
+
+    .director-list li { padding: 2px 0; }
+    .director-list li::before { content: "- "; color: #555; }
+
+    /* Round 2 Debate Cards */
+    .round2-cards {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .round2-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #a78bfa;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 0;
+    }
+
+    .round2-card {
+      background: #141420;
+      border: 1px solid #2a2a3a;
+      border-radius: 14px;
+      padding: 16px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .round2-card[data-role="cso"] { border-left: 3px solid #60a5fa; }
+    .round2-card[data-role="cfo"] { border-left: 3px solid #4ade80; }
+    .round2-card[data-role="cto"] { border-left: 3px solid #f472b6; }
+
+    .r2-revised-position {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #e8e8f0;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: #1a1a28;
+      border-radius: 8px;
+    }
+
+    .r2-section {
+      margin-bottom: 8px;
+    }
+
+    .r2-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .r2-section-title.agreements { color: #4ade80; }
+    .r2-section-title.challenges { color: #f87171; }
+    .r2-section-title.questions { color: #facc15; }
+    .r2-section-title.insights { color: #60a5fa; }
+
+    .r2-list {
+      list-style: none;
+      padding: 0;
+      font-size: 12px;
+      color: #bbb;
+      line-height: 1.5;
+    }
+
+    .r2-list li { padding: 2px 0; }
+    .r2-list.agreements li::before { content: "+ "; color: #4ade80; }
+    .r2-list.challenges li::before { content: "! "; color: #f87171; }
+    .r2-list.questions li::before { content: "? "; color: #facc15; }
+    .r2-list.insights li::before { content: "* "; color: #60a5fa; }
+
+    .challenge-target {
+      font-size: 10px;
+      color: #888;
+      margin-left: 4px;
+    }
+
+    /* Conflicts */
+    .conflicts-section {
+      display: none;
+      background: #1a1a24;
+      border: 1px solid #7f1d1d;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .conflicts-section h3 {
+      font-size: 14px;
+      color: #f87171;
+      margin-bottom: 10px;
+    }
+
+    .conflict-item {
+      padding: 10px;
+      background: #1e1015;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .conflict-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .conflict-type {
+      padding: 2px 6px;
+      background: #7f1d1d;
+      color: #f87171;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .conflict-severity {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .conflict-directors {
+      font-size: 11px;
+      color: #a78bfa;
+    }
+
+    .conflict-desc {
+      color: #ccc;
+      line-height: 1.4;
+    }
+
+    /* CEO Decision */
+    .ceo-section {
+      display: none;
+      background: #1a1a24;
+      border: 1px solid #a78bfa;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .ceo-section h3 {
+      font-size: 14px;
+      color: #a78bfa;
+      margin-bottom: 10px;
+    }
+
+    .ceo-response {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #e8e8f0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .ceo-duration {
+      font-size: 11px;
+      color: #555;
+      margin-top: 10px;
+    }
+
+    /* Board Follow-up */
+    .board-followup {
+      display: none;
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .board-followup h3 {
+      font-size: 14px;
+      color: #a78bfa;
+      margin-bottom: 10px;
+    }
+
+    .followup-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    #followup-input {
+      flex: 1;
+      background: #0f0f13;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      color: #e8e8f0;
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+      font-family: inherit;
+    }
+
+    #followup-input:focus { border-color: #a78bfa; }
+
+    #followup-btn {
+      padding: 8px 16px;
+      background: #a78bfa;
+      border: none;
+      border-radius: 8px;
+      color: #0f0f13;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #followup-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    .board-total-time {
+      text-align: center;
+      font-size: 12px;
+      color: #555;
+      padding: 8px 0;
+    }
+
+    /* Board Audio Players */
+    .director-audio, .ceo-audio {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 6px 10px;
+      background: #0f0f13;
+      border-radius: 8px;
+      border: 1px solid #2a2a3a;
+    }
+
+    .director-audio .play-btn,
+    .ceo-audio .play-btn {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: #a78bfa;
+      color: #0f0f13;
+      border: none;
+      font-size: 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .director-audio .play-btn.playing,
+    .ceo-audio .play-btn.playing { background: #f472b6; }
+
+    .director-audio .audio-progress,
+    .ceo-audio .audio-progress {
+      flex: 1;
+      height: 4px;
+      background: #2a2a3a;
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .director-audio .audio-progress-bar,
+    .ceo-audio .audio-progress-bar {
+      height: 100%;
+      background: #a78bfa;
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.1s;
+    }
+
+    .director-audio .audio-time,
+    .ceo-audio .audio-time {
+      font-size: 11px;
+      color: #666;
+      min-width: 32px;
+      text-align: right;
+    }
+
+    /* Board Mic Button */
+    .board-mic-btn {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: #1e1e2e;
+      border: 1px solid #2a2a3a;
+      color: #888;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.2s;
+    }
+
+    .board-mic-btn:hover { border-color: #a78bfa; color: #a78bfa; }
+    .board-mic-btn.recording { background: #e55; border-color: #e55; color: #fff; animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+    .field-with-mic {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .field-with-mic textarea { flex: 1; }
+
+    .followup-row-with-mic {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .followup-row-with-mic #followup-input { flex: 1; }
+
+    /* Оверлей для мобильных (закрывает панель при клике вне) */
+    #panel-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 4;
+    }
+
+    @media (max-width: 699px) {
+      #panel-overlay.show { display: block; }
+    }
+
+    /* Session restore modal */
+    #session-restore-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: srFadeIn 0.3s ease;
+    }
+    @keyframes srFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .session-restore-card {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      max-width: 380px;
+      width: 90%;
+      padding: 28px;
+      border-radius: 16px;
+      text-align: center;
+    }
+    .session-restore-card h3 {
+      color: #fff;
+      font-size: 18px;
+      margin: 0 0 8px;
+    }
+    .session-restore-card .sr-info {
+      color: #888;
+      font-size: 14px;
+      margin: 0 0 24px;
+    }
+    .session-restore-card .sr-buttons {
+      display: flex;
+      gap: 12px;
+    }
+    .session-restore-card .sr-btn {
+      flex: 1;
+      padding: 12px 0;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.2s;
+    }
+    .session-restore-card .sr-btn:hover { opacity: 0.85; }
+    .sr-btn-primary {
+      background: #a78bfa;
+      color: #fff;
+    }
+    .sr-btn-secondary {
+      background: transparent;
+      border: 1px solid #2a2a3a !important;
+      color: #888;
+    }
+
+    @media (max-width: 480px) {
+      header { padding: 10px 14px; }
+      #chat { padding: 12px 14px; }
+      #bottom { padding: 12px 14px; }
+      .msg { max-width: 95%; }
+    }
+
+    /* ── Telegram file toast ── */
+    #tg-toast {
+      position: fixed; bottom: 80px; right: 20px; z-index: 9999;
+      background: #1e1b4b; border: 1px solid #7c3aed; border-radius: 12px;
+      padding: 12px 16px; max-width: 320px; color: #e2e8f0;
+      box-shadow: 0 4px 24px rgba(124,58,237,0.4);
+      display: none; animation: tgSlideIn 0.3s ease;
+    }
+    #tg-toast.show { display: block; }
+    @keyframes tgSlideIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    #tg-toast .tg-title { font-size: 11px; color: #a78bfa; margin-bottom: 4px; }
+    #tg-toast .tg-name { font-size: 13px; font-weight: 600; word-break: break-all; margin-bottom: 8px; }
+    #tg-toast .tg-btns { display: flex; gap: 8px; }
+    #tg-toast button {
+      flex: 1; padding: 5px 8px; border-radius: 6px; border: none;
+      cursor: pointer; font-size: 12px; font-weight: 600;
+    }
+    #tg-toast .tg-insert { background: #7c3aed; color: #fff; }
+    #tg-toast .tg-insert:hover { background: #6d28d9; }
+    #tg-toast .tg-dismiss { background: #374151; color: #9ca3af; }
+    #tg-toast .tg-dismiss:hover { background: #4b5563; }
+  </style>
+</head>
+<body>
+
+<!-- Telegram file notification toast -->
+<div id="tg-toast">
+  <div class="tg-title">📎 Файл из Telegram</div>
+  <div class="tg-name" id="tg-toast-name"></div>
+  <div class="tg-btns">
+    <button class="tg-insert" onclick="tgInsertFile()">Вставить в чат</button>
+    <button class="tg-dismiss" onclick="tgDismiss()">✕</button>
+  </div>
+</div>
+
+<!-- Оверлей для мобильных -->
+<div id="panel-overlay" onclick="closePanelMobile()"></div>
+
+<header>
+  <div class="logo">⚡ Claude Voice</div>
+  <div class="header-controls">
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="btn-step" onclick="setMode('step')">Step</button>
+      <button class="mode-btn" id="btn-live" onclick="setMode('live')">Live</button>
+      <button class="mode-btn" id="btn-board" onclick="setMode('board')">Board</button>
+    </div>
+    <button id="voices-toggle-btn" onclick="toggleVoicesPanel()">
+      <span class="voice-icon">🎙</span>
+      <span id="current-voice-label">Голос</span>
+      <span id="panel-arrow">›</span>
+    </button>
+    <button id="new-chat-btn" onclick="newChat()" title="Начать новый диалог (очистить историю)">✦ Новый</button>
+  </div>
+</header>
+
+<div class="main-wrap">
+
+  <!-- БОКОВАЯ ПАНЕЛЬ ГОЛОСОВ -->
+  <div id="voices-panel">
+    <div class="panel-header">
+      <span class="panel-title">🎙 Голоса</span>
+      <button class="panel-close" onclick="toggleVoicesPanel()">✕</button>
+    </div>
+
+    <div class="voices-list" id="voices-list">
+      <div style="color:#555;font-size:13px;padding:10px;">Загрузка голосов...</div>
+    </div>
+
+    <div class="panel-hint">
+      Добавь свой голос: положи WAV файл (10–30 сек) в папку <code>voices/</code> и перезагрузи страницу.
+    </div>
+  </div>
+
+  <!-- BOARD VIEW -->
+  <div id="board-view">
+    <!-- Minimal Smart Input Form -->
+    <div class="board-form" id="board-form">
+      <h2>Board of Directors</h2>
+
+      <!-- Company autocomplete -->
+      <div class="form-field full" style="position:relative;">
+        <label>Company <span class="req">*</span></label>
+        <input type="text" id="bf-company" placeholder="Type company name..." autocomplete="off"
+               oninput="onCompanyInput(this.value)" />
+        <datalist id="company-suggestions"></datalist>
+        <!-- Memory loaded badge -->
+        <div id="memory-badge" style="display:none;margin-top:6px;padding:6px 10px;background:#1a2a1a;border:1px solid #2a5a2a;border-radius:6px;font-size:11px;color:#6fcf6f;align-items:center;gap:8px;">
+          <span>&#10003; Profile loaded from memory:</span>
+          <span id="memory-badge-text" style="color:#9fcf9f;"></span>
+          <button onclick="clearMemoryProfile()" style="margin-left:auto;background:none;border:none;color:#666;cursor:pointer;font-size:11px;">Edit</button>
+        </div>
+      </div>
+
+      <!-- Project selector (shown when company is known) -->
+      <div id="project-selector" style="display:none;" class="form-field full">
+        <label>Project <span style="color:#666;font-size:10px;">(optional)</span></label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="bf-project" style="flex:1;background:#1a1a2e;border:1px solid #333;color:#e0e0e0;padding:8px;border-radius:6px;font-size:13px;">
+            <option value="">— General (no specific project) —</option>
+          </select>
+          <button onclick="showNewProjectDialog()" style="background:#1a1a2e;border:1px solid #444;color:#a78bfa;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">+ New</button>
+        </div>
+      </div>
+
+      <!-- Problem / Question — the main input -->
+      <div class="form-field full">
+        <label>What does the board need to analyze? <span class="req">*</span></label>
+        <div class="field-with-mic">
+          <textarea id="bf-problem" rows="4" placeholder="Describe the strategic question, challenge, or decision you need the board to analyze..."></textarea>
+          <button class="board-mic-btn" onclick="boardMicRecord('bf-problem')" id="mic-bf-problem" title="Voice input">&#127908;</button>
+        </div>
+      </div>
+
+      <!-- Financials — only visible for NEW companies (no memory profile) -->
+      <div id="financials-section" style="display:none;">
+        <div class="form-section">
+          <div class="form-section-title">Financials <span style="color:#e55;font-size:10px;">(at least one required for new companies)</span></div>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Revenue</label>
+              <input type="text" id="bf-revenue" placeholder="e.g. $50k MRR" />
+            </div>
+            <div class="form-field">
+              <label>Expenses</label>
+              <input type="text" id="bf-expenses" placeholder="e.g. $80k/month" />
+            </div>
+            <div class="form-field">
+              <label>Runway (months)</label>
+              <input type="number" id="bf-runway" placeholder="e.g. 18" />
+            </div>
+            <div class="form-field">
+              <label>Funding</label>
+              <input type="text" id="bf-funding" placeholder="e.g. $2M seed round" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Override / Add Context — collapsed by default -->
+      <details id="override-details" style="margin-top:8px;">
+        <summary style="cursor:pointer;color:#666;font-size:12px;padding:4px 0;">Override / Add Context</summary>
+        <div class="form-section" style="margin-top:10px;">
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Stage</label>
+              <input type="text" id="bf-stage" placeholder="e.g. Seed, Series A" />
+            </div>
+            <div class="form-field">
+              <label>Tech Stack</label>
+              <input type="text" id="bf-tech" placeholder="e.g. Python, React, AWS" />
+            </div>
+            <div class="form-field">
+              <label>Market Size</label>
+              <input type="text" id="bf-market" placeholder="e.g. $5B TAM" />
+            </div>
+            <div class="form-field">
+              <label>Competitors</label>
+              <input type="text" id="bf-competitors" placeholder="e.g. CompA, CompB" />
+            </div>
+            <div class="form-field">
+              <label>Team Size</label>
+              <input type="number" id="bf-team-size" placeholder="e.g. 12" />
+            </div>
+            <div class="form-field">
+              <label>Target Audience</label>
+              <input type="text" id="bf-audience" placeholder="e.g. SMB SaaS" />
+            </div>
+            <div class="form-field full">
+              <label>Team Description</label>
+              <input type="text" id="bf-team-desc" placeholder="e.g. 5 engineers, 2 sales, 1 PM" />
+            </div>
+            <div class="form-field full">
+              <label>Additional Context</label>
+              <textarea id="bf-context" rows="2" placeholder="Any additional context..."></textarea>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div class="form-errors" id="board-errors"></div>
+      <button id="board-submit-btn" onclick="submitBoard()">Start Board Session</button>
+    </div>
+
+    <!-- New Project Dialog -->
+    <div id="new-project-dialog" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+      <div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:24px;width:380px;max-width:90vw;">
+        <h3 style="margin:0 0 16px;color:#e0e0e0;">New Project</h3>
+        <div class="form-field full" style="margin-bottom:12px;">
+          <label>Project Name</label>
+          <input type="text" id="new-proj-name" placeholder="e.g. Q2 Expansion" style="width:100%;" />
+        </div>
+        <div class="form-field full" style="margin-bottom:12px;">
+          <label>Phase / Goal</label>
+          <input type="text" id="new-proj-phase" placeholder="e.g. Market entry, Restructuring" style="width:100%;" />
+        </div>
+        <div class="form-field full" style="margin-bottom:16px;">
+          <label>Description</label>
+          <textarea id="new-proj-desc" rows="2" placeholder="Brief context..." style="width:100%;"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button onclick="closeNewProjectDialog()" style="background:#333;border:none;color:#999;padding:8px 16px;border-radius:6px;cursor:pointer;">Cancel</button>
+          <button onclick="createProject()" style="background:#a78bfa;border:none;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="board-progress" id="board-progress">
+      <h3>Session Progress</h3>
+      <div class="progress-steps" id="progress-steps">
+        <div class="progress-step" id="ps-directors">
+          <span class="step-icon" id="ps-directors-icon">&#9675;</span>
+          <span>Round 1: Directors analyzing (CSO, CFO, CTO)...</span>
+        </div>
+        <div class="progress-step" id="ps-round2">
+          <span class="step-icon" id="ps-round2-icon">&#9675;</span>
+          <span>Round 2: Directors debating...</span>
+        </div>
+        <div class="progress-step" id="ps-conflicts">
+          <span class="step-icon" id="ps-conflicts-icon">&#9675;</span>
+          <span>Detecting conflicts...</span>
+        </div>
+        <div class="progress-step" id="ps-ceo">
+          <span class="step-icon" id="ps-ceo-icon">&#9675;</span>
+          <span>CEO (Claude) preparing recommendation...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Round 1 Director Cards -->
+    <div class="director-cards" id="director-cards"></div>
+
+    <!-- Round 2 Debate Cards -->
+    <div class="round2-cards" id="round2-cards">
+      <div class="round2-label">Round 2: Debate</div>
+    </div>
+
+    <!-- Conflicts -->
+    <div class="conflicts-section" id="conflicts-section">
+      <h3>Conflicts Detected</h3>
+      <div id="conflicts-list"></div>
+    </div>
+
+    <!-- CEO Recommendation -->
+    <div class="ceo-section" id="ceo-section">
+      <h3>CEO Recommendation (Claude)</h3>
+      <div style="font-size:11px;color:#888;margin-bottom:10px;">Advisory — final decision is yours</div>
+      <div class="ceo-response" id="ceo-response"></div>
+      <div class="ceo-duration" id="ceo-duration"></div>
+    </div>
+
+    <!-- Total Time -->
+    <div class="board-total-time" id="board-total-time"></div>
+
+    <!-- Follow-up -->
+    <div class="board-followup" id="board-followup">
+      <h3>Follow-up Question</h3>
+      <div class="followup-row-with-mic">
+        <button class="board-mic-btn" onclick="boardMicRecord('followup-input')" id="mic-followup" title="Voice input">🎤</button>
+        <input type="text" id="followup-input" placeholder="Ask the CEO a follow-up question..."
+          onkeydown="if(event.key==='Enter') sendFollowup();" />
+        <button id="followup-btn" onclick="sendFollowup()">Ask</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ЧАТ -->
+  <div id="chat-wrap" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+    <div id="chat">
+      <div class="msg claude">
+        <span class="msg-label">Claude</span>
+        <div class="msg-bubble">Привет! Выбери режим и начинай.</div>
+      </div>
+    </div>
+
+    <div id="status-bar">
+      <span id="status-text">Готов</span>
+      <button id="tts-stop-btn" onclick="stopTts()" style="display:none;margin-left:10px;padding:4px 14px;border-radius:6px;border:2px solid #dc2626;background:#dc2626;color:#fff;cursor:pointer;font-weight:600;font-size:13px;">Stop</button>
+      <button id="tts-resume-btn" onclick="resumeTtsAfterBlock()" style="display:none;margin-left:10px;padding:4px 14px;border-radius:6px;border:2px solid #d97706;background:#d97706;color:#fff;cursor:pointer;font-weight:600;font-size:13px;">▶ Tap to play</button>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div id="bottom">
+
+      <!-- Панель вложения (общая для всех режимов) -->
+      <div id="attachment-bar">
+        <div id="attachment-preview"></div>
+        <button class="attach-clear" onclick="clearAttachment()" title="Убрать вложение">✕</button>
+      </div>
+
+      <!-- LIVE режим -->
+      <div id="live-controls" style="display:none;">
+        <div id="visualizer">
+          <div class="bar" style="height:8px"></div>
+          <div class="bar" style="height:14px"></div>
+          <div class="bar" style="height:20px"></div>
+          <div class="bar" style="height:14px"></div>
+          <div class="bar" style="height:8px"></div>
+          <div class="bar" style="height:20px"></div>
+          <div class="bar" style="height:12px"></div>
+        </div>
+        <div class="live-row">
+          <span id="silence-timer">5</span>
+          <button id="mic-btn" onclick="toggleLive()">🎤</button>
+          <button id="auto-live-btn" onclick="toggleAutoLive()" title="Непрерывный режим — нажми один раз">AUTO</button>
+          <button class="attach-btn" id="attach-btn-live" onclick="document.getElementById('file-input').click()" title="Прикрепить файл">📎</button>
+          <button class="attach-btn" id="camera-btn-live" onclick="document.getElementById('camera-input').click()" title="Сфотографировать">📷</button>
+          <button class="attach-btn" id="camera-live-btn" onclick="toggleLiveCamera()" title="Камера в реальном времени">🎥</button>
+        </div>
+        <div id="camera-preview-wrap">
+          <video id="camera-preview" autoplay muted playsinline></video>
+          <canvas id="camera-canvas" style="display:none"></canvas>
+          <button id="camera-switch-btn" onclick="switchCamera()" title="Переключить камеру">🔄</button>
+        </div>
+      </div>
+
+      <!-- STEP режим -->
+      <div id="step-controls" style="display:flex;">
+        <textarea id="transcript-input" placeholder="Надиктуй или напиши сообщение..." rows="2"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendStep();}"></textarea>
+        <div class="step-row">
+          <button class="attach-btn" id="attach-btn-step" onclick="document.getElementById('file-input').click()" title="Прикрепить файл">📎</button>
+          <button class="attach-btn" id="camera-btn-step" onclick="document.getElementById('camera-input').click()" title="Сфотографировать">📷</button>
+          <button id="record-btn-step" onclick="toggleStepRecord()" title="Голосовой ввод">🎤</button>
+          <button id="send-btn" onclick="sendStep()">Отправить</button>
+          <button id="stop-btn" onclick="stopGeneration()">⏹ Стоп</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Скрытые инпуты для файлов -->
+    <input type="file" id="file-input" style="display:none" multiple onchange="handleFileSelect(this)">
+    <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none" onchange="handleFileSelect(this)">
+  </div> <!-- /chat-wrap -->
+</div>
+
+<script>
+// ============================================================
+//  Camera live state
+// ============================================================
+let _camStream = null;
+let _camInterval = null;
+let _camFrame = null;
+let _camFacing = 'user';   // 'user' = фронтальная, 'environment' = задняя
+
+async function toggleLiveCamera() {
+  _camStream ? stopLiveCamera() : await startLiveCamera(_camFacing);
+}
+
+async function startLiveCamera(facing) {
+  // Остановить текущий поток если есть
+  if (_camStream) {
+    _camStream.getTracks().forEach(t => t.stop());
+    _camStream = null;
+  }
+  if (_camInterval) { clearInterval(_camInterval); _camInterval = null; }
+
+  _camFacing = facing || 'user';
+  try {
+    _camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: _camFacing } }
+    });
+    const vid = document.getElementById('camera-preview');
+    vid.srcObject = _camStream;
+    document.getElementById('camera-preview-wrap').classList.add('visible');
+    document.getElementById('camera-live-btn').classList.add('cam-active');
+    _camInterval = setInterval(captureLiveFrame, 1000);
+  } catch(e) {
+    console.error('Camera error:', e);
+    setStatus('Камера недоступна: ' + e.message, 0);
+  }
+}
+
+async function switchCamera() {
+  if (!_camStream) return;
+  const newFacing = _camFacing === 'user' ? 'environment' : 'user';
+  await startLiveCamera(newFacing);
+}
+
+function captureLiveFrame() {
+  const vid = document.getElementById('camera-preview');
+  const cvs = document.getElementById('camera-canvas');
+  if (!vid.videoWidth) return;
+  cvs.width = vid.videoWidth;
+  cvs.height = vid.videoHeight;
+  cvs.getContext('2d').drawImage(vid, 0, 0);
+  cvs.toBlob(blob => {
+    if (blob) _camFrame = new File([blob], 'camera_frame.jpg', { type: 'image/jpeg' });
+  }, 'image/jpeg', 0.7);
+}
+
+function stopLiveCamera() {
+  if (_camInterval) { clearInterval(_camInterval); _camInterval = null; }
+  if (_camStream) { _camStream.getTracks().forEach(t => t.stop()); _camStream = null; }
+  _camFrame = null;
+  document.getElementById('camera-preview-wrap').classList.remove('visible');
+  document.getElementById('camera-live-btn').classList.remove('cam-active');
+}
+
+// ============================================================
+//  Состояние
+// ============================================================
+const STATE = {
+  mode: 'step',
+  wsId: (() => { let id = localStorage.getItem('claude_ws_id'); if (!id) { id = crypto.randomUUID(); localStorage.setItem('claude_ws_id', id); } return id; })(),
+  ws: null,
+  agentSessionId: null,
+  isRecording: false,
+  isProcessing: false,
+  abortController: null,
+  wsReplay: false,       // true во время replay буфера — блокирует авто-воспроизведение TTS
+  responseCompleted: false, // true когда response_complete пришёл через WS — блокирует retry
+  stepQueue: [],        // queue for Step mode messages received while processing
+  mediaRecorder: null,
+  audioChunks: [],
+  silenceTimer: null,
+  attachedFiles: [],
+  analyser: null,
+  animFrame: null,
+  audioCtx: null,
+  stream: null,
+  currentVoice: '',
+  voicesPanelOpen: false,
+  // Board
+  boardSessionId: null,
+  boardProcessing: false,
+  // Board audio queue
+  boardAudioQueue: [],
+  boardAudioPlaying: false,
+  boardMicRecorder: null,
+  // Retry on network drop (phone call)
+  pendingRetry: null,   // {text, msgId} — set when fetch fails, cleared on WS reconnect
+  // Continuous live mode (press once, stays listening)
+  autoLive: false,
+  // Mobile WS fallback: tracks whether WS delivered the transcript for current live request
+  liveUserMsgPending: false,
+  // Streaming element for current Claude response (moved from global to prevent GC/race issues)
+  streamingEl: null,
+};
+
+// Метаданные для отображения голосов
+const VOICE_META = {
+  Ryan:   { emoji: '👨', desc: 'Мужской, чёткий' },
+  Aiden:  { emoji: '👨', desc: 'Мужской, молодой' },
+  Vivian: { emoji: '👩', desc: 'Женский, выразительный' },
+  Serena: { emoji: '👩', desc: 'Женский, спокойный' },
+};
+
+function getVoiceMeta(name) {
+  const key = typeof name === 'string' ? name : String(name);
+  return VOICE_META[key] || { emoji: '🎙', desc: 'Пользовательский голос' };
+}
+
+// ============================================================
+//  WebSocket
+// ============================================================
+function connectWS() {
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${wsProto}://${location.host}/ws/${STATE.wsId}`;
+  STATE.ws = new WebSocket(wsUrl);
+
+  STATE.ws.onopen = () => {
+    hideReconnectBanner();
+    STATE.responseCompleted = false;  // сбрасываем для нового соединения
+    if (STATE.pendingRetry && !STATE.responseCompleted) {
+      // Откладываем retry — даём время replay буфера прийти (response_complete может быть в буфере)
+      setTimeout(() => {
+        if (STATE.pendingRetry && !STATE.responseCompleted) {
+          const retry = STATE.pendingRetry;
+          STATE.pendingRetry = null;
+          processText(retry.text, retry.msgId);
+        }
+      }, 1500);
+    }
+  };
+
+  STATE.ws.onerror = () => {};  // onclose handles reconnect
+
+  STATE.ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'status_update') {
+      setStatus(msg.message, msg.progress || 0);
+    } else if (msg.type === 'transcript') {
+      STATE.liveUserMsgPending = false;  // WS delivered it — no HTTP fallback needed
+      addMessage('user', msg.text);
+      // Add Claude placeholder AFTER user message so order is correct: user → Claude
+      if (STATE.streamingMsgId && !document.getElementById(STATE.streamingMsgId)) {
+        addClaudeMessagePlaceholder(STATE.streamingMsgId);
+      }
+    } else if (msg.type === 'cli_output') {
+      appendClaudeStream(msg.data);
+    } else if (msg.type === 'board_status') {
+      handleBoardStatus(msg.message);
+    } else if (msg.type === 'director_complete') {
+      handleDirectorComplete(msg.director);
+    } else if (msg.type === 'director_audio') {
+      handleDirectorAudio(msg.role, msg.audio_url);
+    } else if (msg.type === 'round2_complete') {
+      handleRound2Complete(msg.response);
+    } else if (msg.type === 'round2_audio') {
+      handleRound2Audio(msg.role, msg.audio_url);
+    } else if (msg.type === 'round2_status') {
+      handleRound2Status(msg.message);
+    } else if (msg.type === 'ceo_output') {
+      handleCeoOutput(msg.data);
+    } else if (msg.type === 'ceo_audio') {
+      handleCeoAudio(msg.audio_url);
+    } else if (msg.type === 'tts_chunk') {
+      handleTtsChunk(msg);
+    } else if (msg.type === 'tts_done') {
+      handleTtsDone();
+    } else if (msg.type === 'agent_session_id') {
+      STATE.agentSessionId = msg.session_id;
+      saveSession();
+    } else if (msg.type === 'telegram_file') {
+      tgShowToast(msg.filename, msg.path, msg.file_type);
+    } else if (msg.type === 'telegram_message') {
+      addMessage('user', '📱 ' + msg.text);
+    } else if (msg.type === 'response_complete') {
+      // Сервер прислал полный текст через WS — использовать если HTTP fetch упал
+      STATE.responseCompleted = true;
+      STATE.pendingRetry = null;  // отменяем retry — ответ уже получен
+      if (msg.response_text) {
+        if (!STATE.wsReplay && STATE.streamingMsgId) {
+          // Финализируем сообщение напрямую через WS (HTTP уже не нужен)
+          finalizeClaudeMessage(STATE.streamingMsgId, msg.response_text, '');
+          STATE.streamingMsgId = null;
+        } else if (STATE.wsReplay) {
+          // Reconnect replay: создаём новое сообщение (ответ пришёл пока WS был оборван)
+          addMessage('claude', msg.response_text);
+        }
+      }
+    } else if (msg.type === 'chat_history') {
+      // Restore chat from server-side log (fires when localStorage is empty / new browser session)
+      const existingMsgs = document.querySelectorAll('#chat .msg');
+      if (existingMsgs.length <= 1 && msg.msgs && msg.msgs.length > 0) {
+        const chat = document.getElementById('chat');
+        chat.innerHTML = '';
+        msg.msgs.forEach(m => addMessage(m.role, m.text));
+      }
+    } else if (msg.type === 'reconnect_replay_start') {
+      STATE.wsReplay = true;   // блокируем TTS во время replay
+      if (msg.count > 0) {
+        // Clear localStorage-restored messages to prevent duplicates during replay
+        const chat = document.getElementById('chat');
+        chat.innerHTML = '';
+        showReconnectBanner(`📡 Переподключено`);
+      }
+      setTimeout(hideReconnectBanner, 5000); // auto-hide страховка
+    } else if (msg.type === 'reconnect_replay_end') {
+      STATE.wsReplay = false;
+      hideReconnectBanner();
+      // После replay: если response_complete уже пришёл — не делаем retry
+      if (STATE.responseCompleted) STATE.pendingRetry = null;
+    } else if (msg.type === 'reconnect_no_buffer') {
+      STATE.wsReplay = false;
+      hideReconnectBanner();
+    }
+  };
+
+  STATE.ws.onclose = () => {
+    showReconnectBanner('⚠️ Соединение потеряно — переподключение...');
+    setTimeout(connectWS, 2000);
+  };
+
+  setInterval(() => {
+    if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+      STATE.ws.send('ping');
+    }
+  }, 20000);
+}
+
+function showReconnectBanner(text) {
+  let b = document.getElementById('reconnect-banner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'reconnect-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;text-align:center;padding:8px 16px;font-size:14px;font-weight:600;';
+    document.body.prepend(b);
+  }
+  b.textContent = text;
+  b.style.display = 'block';
+}
+
+function hideReconnectBanner() {
+  const b = document.getElementById('reconnect-banner');
+  if (b) b.style.display = 'none';
+}
+
+// ============================================================
+//  Панель голосов
+// ============================================================
+function toggleVoicesPanel() {
+  STATE.voicesPanelOpen = !STATE.voicesPanelOpen;
+  const panel = document.getElementById('voices-panel');
+  const btn = document.getElementById('voices-toggle-btn');
+  const overlay = document.getElementById('panel-overlay');
+  const arrow = document.getElementById('panel-arrow');
+
+  panel.classList.toggle('open', STATE.voicesPanelOpen);
+  btn.classList.toggle('open', STATE.voicesPanelOpen);
+  overlay.classList.toggle('show', STATE.voicesPanelOpen);
+  arrow.textContent = STATE.voicesPanelOpen ? '‹' : '›';
+}
+
+function closePanelMobile() {
+  if (STATE.voicesPanelOpen) toggleVoicesPanel();
+}
+
+async function loadVoices() {
+  try {
+    const res = await fetch('/api/speakers');
+    const data = await res.json();
+    STATE.currentVoice = data.current || (data.speakers[0] || '');
+
+    renderVoicesList(data.speakers, data.current);
+    updateVoiceLabel(data.current);
+  } catch (e) {
+    console.warn('Не удалось загрузить голоса:', e);
+    document.getElementById('voices-list').innerHTML =
+      '<div style="color:#e55;font-size:13px;padding:10px;">Ошибка загрузки голосов</div>';
+  }
+}
+
+function renderVoicesList(voices, current) {
+  const list = document.getElementById('voices-list');
+
+  if (voices.length === 0) {
+    list.innerHTML = `
+      <div style="color:#666;font-size:13px;padding:10px;line-height:1.6;">
+        Нет голосов.<br>
+        Запусти <code style="background:#1e1e2e;padding:2px 5px;border-radius:3px;">python setup_voices.py</code><br>
+        чтобы установить стандартные голоса.
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = voices.map(rawName => {
+    const name = typeof rawName === 'string' ? rawName : String(rawName);
+    const meta = getVoiceMeta(name);
+    const isActive = name === current;
+    return `
+      <div class="voice-item ${isActive ? 'active' : ''}" onclick="selectVoice('${name}')" id="vi-${name}">
+        <div class="voice-avatar">${meta.emoji}</div>
+        <div class="voice-info">
+          <div class="voice-name">${name}</div>
+          <div class="voice-desc">${meta.desc}</div>
+        </div>
+        <span class="voice-check">✓</span>
+      </div>`;
+  }).join('');
+}
+
+async function selectVoice(name) {
+  if (name === STATE.currentVoice) return;
+
+  // Мгновенное обновление UI
+  document.querySelectorAll('.voice-item').forEach(el => el.classList.remove('active'));
+  const item = document.getElementById(`vi-${name}`);
+  if (item) item.classList.add('active');
+
+  updateVoiceLabel(name);
+  STATE.currentVoice = name;
+
+  // Отправляем на сервер
+  const fd = new FormData();
+  fd.append('speaker', name);
+  try {
+    await fetch('/api/speaker', { method: 'POST', body: fd });
+    setStatus(`Голос: ${name}`);
+    setTimeout(() => setStatus('Готов'), 1500);
+  } catch (e) {
+    setStatus('Ошибка смены голоса');
+  }
+}
+
+function updateVoiceLabel(name) {
+  const meta = getVoiceMeta(name);
+  document.getElementById('current-voice-label').textContent =
+    name ? `${meta.emoji} ${name}` : 'Голос';
+}
+
+// ============================================================
+//  Режимы
+// ============================================================
+function setMode(mode) {
+  STATE.mode = mode;
+  document.getElementById('btn-step').classList.toggle('active', mode === 'step');
+  document.getElementById('btn-live').classList.toggle('active', mode === 'live');
+  document.getElementById('btn-board').classList.toggle('active', mode === 'board');
+  document.getElementById('step-controls').style.display = mode === 'step' ? 'flex' : 'none';
+  document.getElementById('live-controls').style.display = mode === 'live' ? 'flex' : 'none';
+
+  // Board view vs Chat view
+  const boardView = document.getElementById('board-view');
+  const chatWrap = document.getElementById('chat-wrap');
+  if (mode === 'board') {
+    boardView.style.display = 'flex';
+    chatWrap.style.display = 'none';
+    loadBoardCompanies();  // load autocomplete on board tab open
+  } else {
+    boardView.style.display = 'none';
+    chatWrap.style.display = 'flex';
+  }
+
+  if (mode === 'step' && STATE.isRecording) stopRecording();
+}
+
+// ============================================================
+//  LIVE режим
+// ============================================================
+async function toggleLive() {
+  unlockTtsAudio();
+  if (STATE.isRecording) {
+    stopRecording();
+  } else {
+    await startRecording('live');
+  }
+}
+
+// ============================================================
+//  AUTO LIVE — непрерывный режим (нажал один раз, микрофон всегда включён)
+// ============================================================
+async function toggleAutoLive() {
+  unlockTtsAudio();
+  const btn = document.getElementById('auto-live-btn');
+  STATE.autoLive = !STATE.autoLive;
+
+  if (STATE.autoLive) {
+    btn.classList.add('active');
+    btn.textContent = 'AUTO ●';
+    // Переключаемся в live режим если ещё не там
+    if (STATE.mode !== 'live') {
+      setMode('live');
+    }
+    // Сразу начинаем слушать
+    if (!STATE.isRecording && !STATE.isProcessing) {
+      await startRecording();
+    }
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = 'AUTO';
+    // НЕ останавливаем запись принудительно — пусть доработает до тишины естественно
+    // silenceDetection видит STATE.autoLive=false и не запустит следующий цикл
+  }
+}
+
+// ============================================================
+//  STEP режим
+// ============================================================
+async function toggleStepRecord() {
+  unlockTtsAudio();
+  if (STATE.isRecording) {
+    stopRecording(true);
+  } else {
+    await startRecording('step');
+  }
+}
+
+function sendStep() {
+  unlockTtsAudio();
+  const input = document.getElementById('transcript-input');
+  const text = input.value.trim();
+  if (!text && STATE.attachedFiles.length === 0) return;
+  input.value = '';
+  input.focus();  // Keep keyboard open on mobile
+  const finalText = text || '📎';
+
+  // Slash-команды (локальные, не уходят в Claude)
+  if (finalText.startsWith('/')) {
+    handleSlashCommand(finalText);  // fire-and-forget
+    return;
+  }
+
+  if (STATE.isProcessing) {
+    // Queue the message — instant feedback, no await needed
+    STATE.stepQueue.push(finalText);
+    addMessage('user', `⏳ ${finalText}`);
+    _updateSendBtnQueue();
+    return;
+  }
+
+  addMessage('user', finalText);
+  _startProcessText(finalText);  // fire-and-forget — does NOT block the button
+}
+
+// Non-blocking wrapper so sendStep() is never async-suspended
+function _startProcessText(text) {
+  processText(text).catch(e => console.error('[sendStep]', e));
+}
+
+function _updateSendBtnQueue() {
+  const btn = document.getElementById('send-btn');
+  if (!btn) return;
+  const n = STATE.stepQueue.length;
+  if (n > 0) {
+    btn.textContent = `В очереди (${n})`;
+    btn.style.background = '#d97706';  // amber — "waiting"
+  } else {
+    btn.textContent = 'Отправить';
+    btn.style.background = '';  // reset to CSS default
+  }
+}
+
+function _updateStopBtn() {
+  const btn = document.getElementById('stop-btn');
+  if (!btn) return;
+  btn.style.display = STATE.isProcessing ? 'inline-flex' : 'none';
+}
+
+function stopGeneration() {
+  if (!STATE.isProcessing) return;
+  if (STATE.abortController) {
+    STATE.abortController.abort();
+  }
+}
+
+async function handleSlashCommand(text) {
+  const cmd = text.toLowerCase().split(/\s+/);
+
+  if (cmd[0] === '/model' || cmd[0] === '/м' || cmd[0] === '/модель') {
+    // /model — показать текущую + выбор
+    // /model sonnet — переключить
+    // /model opus — переключить
+    if (cmd[1]) {
+      // Переключение
+      try {
+        const fd = new FormData();
+        fd.append('model', cmd[1]);
+        const res = await fetch('/api/model', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.ok) {
+          addMessage('claude', `Модель переключена: ${data.short.toUpperCase()} (${data.model})`);
+        } else {
+          addMessage('claude', `Ошибка: ${data.error || 'не удалось переключить'}`);
+        }
+      } catch (e) {
+        addMessage('claude', `Ошибка: ${e.message}`);
+      }
+    } else {
+      // Показать текущую + кнопки выбора
+      try {
+        const res = await fetch('/api/model');
+        const data = await res.json();
+        const chat = document.getElementById('chat');
+        const div = document.createElement('div');
+        div.className = 'msg claude';
+        div.innerHTML = `
+          <span class="msg-label">System</span>
+          <div class="msg-bubble">
+            <div>Текущая модель: <b>${data.short.toUpperCase()}</b> (${data.model})</div>
+            <div style="margin-top:8px;display:flex;gap:8px;">
+              <button onclick="switchModel('sonnet')" style="padding:8px 20px;border-radius:8px;border:2px solid #7c3aed;background:${data.short==='sonnet'?'#7c3aed':'transparent'};color:${data.short==='sonnet'?'#fff':'#7c3aed'};cursor:pointer;font-weight:600;">Sonnet 4.6</button>
+              <button onclick="switchModel('opus')" style="padding:8px 20px;border-radius:8px;border:2px solid #dc2626;background:${data.short==='opus'?'#dc2626':'transparent'};color:${data.short==='opus'?'#fff':'#dc2626'};cursor:pointer;font-weight:600;">Opus 4.6</button>
+            </div>
+          </div>`;
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+      } catch (e) {
+        addMessage('claude', `Ошибка: ${e.message}`);
+      }
+    }
+    return true;
+  }
+
+  if (cmd[0] === '/restart' || cmd[0] === '/перезапуск') {
+    addMessage('claude', 'Перезапуск сервера... Подождите ~30 секунд. Страница обновится автоматически.\n\nNgrok URL остаётся прежним.');
+    try {
+      await fetch('/api/restart', { method: 'POST' });
+    } catch (e) {
+      // Ожидаемо — сервер отключается
+    }
+    // Автоматическое обновление страницы после перезапуска (~30 сек на загрузку моделей)
+    let countdown = 30;
+    const countInterval = setInterval(() => {
+      countdown--;
+      setStatus(`Перезапуск сервера... ${countdown}с`);
+      if (countdown <= 0) {
+        clearInterval(countInterval);
+        location.reload();
+      }
+    }, 1000);
+    return true;
+  }
+
+  if (cmd[0] === '/openrouter' || cmd[0] === '/or') {
+    if (cmd[1]) {
+      // /openrouter <модель или номер>
+      try {
+        const fd = new FormData();
+        fd.append('model', cmd[1]);
+        const res = await fetch('/api/openrouter', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.ok) {
+          addMessage('claude', `✓ OpenRouter включён. Модель: ${data.model}\nПерезапусти сервер (/restart) чтобы применить.`);
+        } else {
+          addMessage('claude', `Ошибка: ${data.error}`);
+        }
+      } catch (e) {
+        addMessage('claude', `Ошибка: ${e.message}`);
+      }
+    } else {
+      // Показать меню выбора
+      const chat = document.getElementById('chat');
+      const div = document.createElement('div');
+      div.className = 'msg claude';
+      div.innerHTML = `
+        <span class="msg-label">System</span>
+        <div class="msg-bubble">
+          <div style="margin-bottom:10px;font-weight:600;">Выбери модель OpenRouter:</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <button onclick="switchOpenRouter('minimax/minimax-m2.5:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">1. minimax/minimax-m2.5:free <span style="opacity:.6">(бесплатная)</span></button>
+            <button onclick="switchOpenRouter('qwen/qwen3.6-plus-preview:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">2. qwen/qwen3.6-plus-preview:free <span style="opacity:.6">(бесплатная)</span></button>
+            <button onclick="switchOpenRouter('qwen/qwen3-coder:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">3. qwen/qwen3-coder:free <span style="opacity:.6">(бесплатная, для кода)</span></button>
+            <button onclick="switchOpenRouter('deepseek/deepseek-v3.2-exp')" style="padding:8px 14px;border-radius:8px;border:2px solid #f59e0b;background:transparent;color:#f59e0b;cursor:pointer;text-align:left;">4. deepseek/deepseek-v3.2-exp <span style="opacity:.6">(экспериментальная)</span></button>
+            <button onclick="switchOpenRouter('anthropic/claude-sonnet-4-5')" style="padding:8px 14px;border-radius:8px;border:2px solid #dc2626;background:transparent;color:#dc2626;cursor:pointer;text-align:left;">5. anthropic/claude-sonnet-4-5 <span style="opacity:.6">(платная)</span></button>
+            <button onclick="switchOpenRouter('openai/gpt-4o')" style="padding:8px 14px;border-radius:8px;border:2px solid #dc2626;background:transparent;color:#dc2626;cursor:pointer;text-align:left;">6. openai/gpt-4o <span style="opacity:.6">(платная)</span></button>
+          </div>
+        </div>`;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+    return true;
+  }
+
+  if (cmd[0] === '/anthropic') {
+    try {
+      const res = await fetch('/api/anthropic', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        addMessage('claude', '✓ Переключено на прямой Anthropic API.\nПерезапусти сервер (/restart) чтобы применить.');
+      } else {
+        addMessage('claude', `Ошибка: ${data.error}`);
+      }
+    } catch (e) {
+      addMessage('claude', `Ошибка: ${e.message}`);
+    }
+    return true;
+  }
+
+  if (cmd[0] === '/help' || cmd[0] === '/h' || cmd[0] === '/помощь') {
+    addMessage('claude', 'Команды:\n/restart — перезапустить сервер (ngrok URL сохраняется)\n/model — выбрать модель (Sonnet / Opus)\n/model sonnet — переключить на Sonnet 4.6\n/model opus — переключить на Opus 4.6\n/openrouter — переключить на OpenRouter (меню моделей)\n/openrouter <модель> — напрямую (напр. qwen/qwen3-coder:free)\n/anthropic — вернуться на прямой Anthropic API');
+    return true;
+  }
+
+  return false; // не наша команда — отправить в Claude
+}
+
+async function switchOpenRouter(modelId) {
+  try {
+    const fd = new FormData();
+    fd.append('model', modelId);
+    const res = await fetch('/api/openrouter', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      addMessage('claude', `✓ OpenRouter включён. Модель: ${data.model}\nПерезапусти сервер (/restart) чтобы применить.`);
+    } else {
+      addMessage('claude', `Ошибка: ${data.error}`);
+    }
+  } catch (e) {
+    addMessage('claude', `Ошибка: ${e.message}`);
+  }
+}
+
+async function switchModel(name) {
+  try {
+    const fd = new FormData();
+    fd.append('model', name);
+    const res = await fetch('/api/model', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      addMessage('claude', `Модель переключена: ${data.short.toUpperCase()} (${data.model})`);
+    }
+  } catch (e) {
+    addMessage('claude', `Ошибка: ${e.message}`);
+  }
+}
+
+// ============================================================
+//  Запись аудио
+// ============================================================
+async function startRecording() {
+  if (STATE.isRecording) return;  // guard against double-call race condition
+  STATE.isRecording = true;       // set BEFORE await to block concurrent calls
+
+  stopTts();
+
+  // Close previous AudioContext to prevent leak (browsers limit to ~6-8)
+  if (STATE.audioCtx) {
+    try { STATE.audioCtx.close(); } catch(_) {}
+    STATE.audioCtx = null;
+  }
+  // Stop orphaned MediaRecorder if still running
+  if (STATE.mediaRecorder && STATE.mediaRecorder.state !== 'inactive') {
+    try { STATE.mediaRecorder.stop(); } catch(_) {}
+  }
+
+  try {
+    STATE.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    STATE.isRecording = false;
+    setStatus('Нет доступа к микрофону: ' + e.message);
+    return;
+  }
+
+  STATE.audioChunks = [];
+
+  STATE.audioCtx = new AudioContext();
+  const source = STATE.audioCtx.createMediaStreamSource(STATE.stream);
+  STATE.analyser = STATE.audioCtx.createAnalyser();
+  STATE.analyser.fftSize = 256;
+  source.connect(STATE.analyser);
+
+  const mimeType = getSupportedMimeType();
+  STATE.mediaRecorder = new MediaRecorder(STATE.stream, { mimeType });
+  STATE.mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) STATE.audioChunks.push(e.data);
+  };
+  STATE.mediaRecorder.start(200);
+
+  if (STATE.mode === 'live') {
+    document.getElementById('mic-btn').classList.add('recording');
+    document.getElementById('mic-btn').textContent = '⏹';
+    startSilenceDetection();
+  } else {
+    document.getElementById('record-btn-step').classList.add('recording');
+    document.getElementById('record-btn-step').textContent = '⏹';
+  }
+
+  startVisualizer();
+  setStatus('Запись...', 0);
+}
+
+function stopRecording(fillTextarea = false) {
+  if (!STATE.isRecording) return;
+  STATE.isRecording = false;
+
+  clearTimeout(STATE.silenceTimer);
+  STATE.silenceTimer = null;
+
+  if (STATE.mediaRecorder && STATE.mediaRecorder.state !== 'inactive') {
+    STATE.mediaRecorder.stop();
+  }
+  if (STATE.stream) STATE.stream.getTracks().forEach(t => t.stop());
+
+  stopVisualizer();
+
+  document.getElementById('mic-btn').classList.remove('recording');
+  document.getElementById('mic-btn').textContent = '🎤';
+  document.getElementById('silence-timer').style.display = 'none';
+  document.getElementById('record-btn-step').classList.remove('recording');
+  document.getElementById('record-btn-step').textContent = '🎤';
+
+  setTimeout(() => {
+    if (STATE.audioChunks.length === 0) { setStatus('Нет аудио'); return; }
+    const blob = new Blob(STATE.audioChunks, { type: getSupportedMimeType() });
+    if (fillTextarea) transcribeForTextarea(blob);
+    else sendAudioToServer(blob);
+  }, 300);
+}
+
+async function transcribeForTextarea(blob) {
+  setStatus('Распознавание речи...', 20);
+  const fd = new FormData();
+  fd.append('audio', blob, 'audio' + getExtension(blob.type));
+  try {
+    const res = await fetch('/api/stt', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok && data.transcript) {
+      const ta = document.getElementById('transcript-input');
+      ta.value = (ta.value ? ta.value + ' ' : '') + data.transcript;
+      ta.focus();
+      setStatus('Распознано — отредактируй и нажми Отправить');
+    } else {
+      setStatus('Не удалось распознать');
+    }
+  } catch (e) {
+    setStatus('Ошибка: ' + e.message);
+  }
+}
+
+async function sendAudioToServer(blob) {
+  if (STATE.isProcessing) return;
+  STATE.isProcessing = true;
+  setStatus('Отправка...', 10);
+
+  // Placeholder created AFTER transcript arrives (so user msg appears before Claude bubble)
+  const msgId = 'msg-live-' + Date.now();
+  STATE.streamingMsgId = msgId;
+
+  // [FIX] Flag: expect WS to deliver user transcript; fallback to HTTP response if it doesn't
+  STATE.liveUserMsgPending = true;
+
+  const fd = new FormData();
+  fd.append('audio', blob, 'audio' + getExtension(blob.type));
+  fd.append('ws_id', STATE.wsId);
+  fd.append('mode', 'live');
+  STATE.attachedFiles.forEach(f => fd.append('attachments', f, f.name));
+  if (STATE.attachedFiles.length > 0) clearAttachment();
+  if (_camFrame) fd.append('attachments', _camFrame, _camFrame.name);
+
+  try {
+    const res = await fetch('/api/voice', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      // [FIX] Fallback: show user message if WS transcript never arrived (mobile WS drop)
+      if (STATE.liveUserMsgPending && data.transcript) {
+        addMessage('user', data.transcript);
+      }
+      // Finalize the streaming placeholder with the full response text
+      finalizeClaudeMessage(msgId, data.response_text, null);
+      // [FIX] TTS fallback: if WS delivered no chunks at all, request TTS via HTTP
+      if (ttsChunkUrls.length === 0 && !ttsPlaying && ttsQueue.length === 0 && data.response_text) {
+        setTimeout(() => requestFallbackTts(data.response_text), 1500);
+      }
+      setStatus('Готово!', 100);
+      setTimeout(() => setStatus('Готов'), 2000);
+    } else {
+      setStatus('Ошибка: ' + (data.error || ''));
+      const el = document.getElementById(msgId);
+      if (el) el.remove();
+      // AUTO LIVE: restart recording even on error (STT fail, corrupt audio, etc.)
+      if (STATE.autoLive && !STATE.isRecording) {
+        setTimeout(() => { if (STATE.autoLive && !STATE.isRecording && !STATE.isProcessing) startRecording(); }, 1500);
+      }
+    }
+  } catch (e) {
+    setStatus('Ошибка: ' + e.message);
+    const el = document.getElementById(msgId);
+    if (el) el.remove();
+    // AUTO LIVE: restart on network error too
+    if (STATE.autoLive && !STATE.isRecording) {
+      setTimeout(() => { if (STATE.autoLive && !STATE.isRecording && !STATE.isProcessing) startRecording(); }, 2000);
+    }
+  } finally {
+    STATE.isProcessing = false;
+    STATE.liveUserMsgPending = false;
+    STATE.streamingMsgId = null;
+    // AUTO LIVE: микрофон включается из handleTtsDone, после того как TTS доиграл
+  }
+}
+
+// [FIX] Fallback TTS via HTTP — used when WS drops on mobile and no TTS chunks arrived
+async function requestFallbackTts(text) {
+  if (ttsPlaying || ttsQueue.length > 0 || ttsChunkUrls.length > 0) return; // WS TTS arrived
+  debugLog('fallback TTS: no WS chunks received — requesting via HTTP');
+  try {
+    const fd = new FormData();
+    fd.append('text', text);
+    const res = await fetch('/api/tts', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok && data.audio_url) {
+      ttsQueue.push(data.audio_url);
+      ttsChunkUrls.push(data.audio_url);
+      document.getElementById('tts-stop-btn').style.display = 'inline-block';
+      if (!ttsPlaying) playNextTtsChunk();
+    }
+  } catch(e) {
+    debugLog('fallback TTS error: ' + e.message);
+  }
+}
+
+async function processText(text, existingMsgId = null) {
+  if (STATE.isProcessing) return;
+  STATE.isProcessing = true;
+  STATE.responseCompleted = false;  // сбрасываем для нового запроса
+  STATE.abortController = new AbortController();
+  _updateStopBtn();
+
+  const msgId = existingMsgId || 'msg-' + Date.now();
+  STATE.streamingMsgId = msgId;
+  if (!existingMsgId) {
+    addClaudeMessagePlaceholder(msgId);
+  }
+  setStatus('Отправка в Claude CLI...', 40);
+
+  const fd = new FormData();
+  fd.append('text', text);
+  fd.append('ws_id', STATE.wsId);
+  fd.append('mode', 'step');
+  STATE.attachedFiles.forEach(f => fd.append('attachments', f, f.name));
+  if (STATE.attachedFiles.length > 0) clearAttachment();
+
+  try {
+    const res = await fetch('/api/text', { method: 'POST', body: fd, signal: STATE.abortController.signal });
+    const data = await res.json();
+    if (data.ok) {
+      finalizeClaudeMessage(msgId, data.response_text, data.audio_url);
+      setStatus('Готово!', 100);
+      setTimeout(() => setStatus('Готов'), 2000);
+    } else {
+      updateMessageBubble(msgId, 'Ошибка: ' + (data.error || ''));
+      setStatus('Ошибка: ' + (data.error || ''));
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      updateMessageBubble(msgId, '⏹ Остановлено');
+      setStatus('Остановлено');
+      STATE.stepQueue = [];
+    } else {
+      // Network error — проверяем есть ли уже стриминговый контент в пузыре
+      const bubbleEl = document.querySelector(`#${msgId} .msg-bubble, #${msgId}.msg-bubble`);
+      const hasStreamedText = bubbleEl && bubbleEl.textContent.trim().length > 10;
+      if (hasStreamedText) {
+        // Контент уже пришёл через WS streaming — не затираем его
+        // response_complete через WS финализирует сообщение автоматически
+        setStatus('Соединение восстанавливается...');
+      } else {
+        // Ничего не было показано — показываем статус ожидания
+        updateMessageBubble(msgId, '⟳ Соединение прервано. Ожидаем восстановления...');
+        setStatus('Переподключение...');
+      }
+      // retry только если response_complete ещё не пришёл
+      if (!STATE.responseCompleted) {
+        STATE.pendingRetry = {text, msgId};
+      }
+    }
+  } finally {
+    STATE.isProcessing = false;
+    STATE.abortController = null;
+    _updateStopBtn();
+    // Drain Step mode queue
+    if (STATE.stepQueue.length > 0) {
+      const next = STATE.stepQueue.shift();
+      _updateSendBtnQueue();
+      // Replace the ⏳ prefix on the queued message bubble
+      const allMsgs = document.querySelectorAll('#chat .msg.user .msg-bubble');
+      for (const el of allMsgs) {
+        if (el.textContent.trim() === `⏳ ${next}`) {
+          el.textContent = next;
+          saveSession();  // persist clean text (without ⏳)
+          break;
+        }
+      }
+      processText(next).catch(e => console.error('[queue drain]', e));
+    } else {
+      _updateSendBtnQueue();  // Reset button to "Отправить"
+    }
+  }
+}
+
+// ============================================================
+//  Детект тишины (Live)
+// ============================================================
+function startSilenceDetection() {
+  let silenceStart = null;
+  let speechDetected = false;
+  const SILENCE_MS = 2500;
+  const SPEECH_THRESHOLD = 0.03;   // RMS чтобы засчитать как голос (фильтрует фоновый шум)
+  const silenceEl = document.getElementById('silence-timer');
+
+  function check() {
+    if (!STATE.isRecording) return;
+    const data = new Uint8Array(STATE.analyser.frequencyBinCount);
+    STATE.analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+
+    if (rms >= SPEECH_THRESHOLD) {
+      // Голос обнаружен — сбрасываем таймер тишины
+      speechDetected = true;
+      silenceStart = null;
+      silenceEl.style.display = 'none';
+    } else if (speechDetected) {
+      // Ниже порога, но голос уже был — считаем тишину
+      if (!silenceStart) silenceStart = Date.now();
+      const elapsed = Date.now() - silenceStart;
+      const remaining = Math.ceil((SILENCE_MS - elapsed) / 1000);
+      if (remaining <= 2) {
+        silenceEl.style.display = 'block';
+        silenceEl.textContent = remaining > 0 ? remaining : '→';
+      }
+      if (elapsed >= SILENCE_MS) { silenceEl.style.display = 'none'; stopRecording(false); return; }
+    }
+    // Если голос ещё не был обнаружен — игнорируем шум, ничего не делаем
+    STATE.silenceTimer = setTimeout(check, 100);
+  }
+  check();
+}
+
+// ============================================================
+//  Визуализатор
+// ============================================================
+function startVisualizer() {
+  const bars = document.querySelectorAll('#visualizer .bar');
+  if (!STATE.analyser) return;
+  function draw() {
+    if (!STATE.isRecording) return;
+    STATE.animFrame = requestAnimationFrame(draw);
+    const data = new Uint8Array(STATE.analyser.frequencyBinCount);
+    STATE.analyser.getByteFrequencyData(data);
+    bars.forEach((bar, i) => {
+      const val = data[Math.floor(i * data.length / bars.length)] / 255;
+      bar.style.height = Math.max(4, val * 36) + 'px';
+    });
+  }
+  draw();
+}
+
+function stopVisualizer() {
+  if (STATE.animFrame) cancelAnimationFrame(STATE.animFrame);
+  document.querySelectorAll('#visualizer .bar').forEach(b => b.style.height = '8px');
+}
+
+// ============================================================
+//  Чат
+// ============================================================
+// streamingEl moved to STATE.streamingEl
+
+// ---- Session persistence (localStorage) ----
+const SESSION_KEY = 'claude_voice_session';
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SESSION_MSG_LIMIT = 300; // rolling buffer — keep last N messages
+
+function saveSession() {
+  try {
+    const allMsgs = document.querySelectorAll('#chat .msg');
+    const data = [];
+    allMsgs.forEach(m => {
+      const role = m.classList.contains('user') ? 'user' : 'claude';
+      const bubble = m.querySelector('.msg-bubble');
+      if (bubble) data.push({ role, text: bubble.textContent });
+    });
+    const trimmed = data.slice(-SESSION_MSG_LIMIT); // keep last 300
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      ts: Date.now(),
+      msgs: trimmed,
+      agentSessionId: STATE.agentSessionId || null,
+    }));
+  } catch(e) { /* quota exceeded or private mode */ }
+}
+
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    const { ts, msgs, agentSessionId } = JSON.parse(raw);
+    if (Date.now() - ts > SESSION_MAX_AGE) { clearSavedSession(); return false; }
+    if (!msgs || msgs.length === 0) return false;
+    const chat = document.getElementById('chat');
+    chat.innerHTML = '';
+    msgs.forEach(m => addMessage(m.role, m.text));
+    if (agentSessionId) {
+      STATE.agentSessionId = agentSessionId;
+      const fd = new FormData();
+      fd.append('ws_id', STATE.wsId);
+      fd.append('agent_session_id', agentSessionId);
+      fetch('/api/session/restore', { method: 'POST', body: fd }).catch(() => {});
+    }
+    return true;
+  } catch(e) { return false; }
+}
+
+function clearSavedSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+}
+
+function formatTimeAgo(ts) {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'только что';
+  if (min < 60) return min + ' мин назад';
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return hrs + ' ч назад';
+  return 'вчера';
+}
+
+function showSessionPrompt() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    const { ts, msgs } = JSON.parse(raw);
+    if (!msgs || msgs.length === 0) return;
+    if (Date.now() - ts > SESSION_MAX_AGE) { clearSavedSession(); return; }
+
+    const count = msgs.length;
+    const ago = formatTimeAgo(ts);
+
+    const overlay = document.createElement('div');
+    overlay.id = 'session-restore-overlay';
+    overlay.innerHTML = `
+      <div class="session-restore-card">
+        <h3>Незавершённый диалог</h3>
+        <p class="sr-info">${count} сообщений · ${ago}</p>
+        <div class="sr-buttons">
+          <button class="sr-btn sr-btn-primary" id="sr-continue">Продолжить</button>
+          <button class="sr-btn sr-btn-secondary" id="sr-new">Начать новый</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    document.getElementById('sr-continue').onclick = () => {
+      overlay.remove();
+      restoreSession();
+      setStatus('Сессия восстановлена');
+      setTimeout(() => setStatus('Готов'), 2000);
+    };
+    document.getElementById('sr-new').onclick = () => {
+      overlay.remove();
+      clearSavedSession();
+    };
+  } catch(e) {}
+}
+
+function copyMsgText(btn) {
+  const msg = btn.closest('.msg');
+  const bubble = msg.querySelector('.msg-bubble');
+  if (!bubble) return;
+  navigator.clipboard.writeText(bubble.textContent).then(() => {
+    btn.classList.add('copied');
+    btn.textContent = '✓ Скопировано';
+    setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = '📋 Copy'; }, 1500);
+  }).catch(() => {});
+}
+
+function addMessage(role, text) {
+  const chat = document.getElementById('chat');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `
+    <span class="msg-label">${role === 'user' ? 'Вы' : 'Claude'}</span>
+    <div class="msg-bubble">${escHtml(text)}</div>
+    <div class="msg-actions"><button class="msg-copy-btn" onclick="copyMsgText(this)">📋 Copy</button></div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  saveSession();
+}
+
+function addClaudeMessage(text, audioUrl) {
+  finalizeClaudeMessage(null, text, audioUrl);
+}
+
+function addClaudeMessagePlaceholder(id) {
+  const chat = document.getElementById('chat');
+  const div = document.createElement('div');
+  div.className = 'msg claude';
+  div.id = id;
+  div.innerHTML = `
+    <span class="msg-label">Claude</span>
+    <div class="msg-bubble" id="${id}-bubble"><span>▋</span></div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  STATE.streamingEl = document.getElementById(`${id}-bubble`);
+}
+
+function appendClaudeStream(text) {
+  if (!STATE.streamingEl) return;
+  const current = STATE.streamingEl.textContent.replace('▋', '');
+  STATE.streamingEl.textContent = current + text + '▋';
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+}
+
+function finalizeClaudeMessage(id, text, audioUrl) {
+  let msgDiv;
+  if (id) {
+    const bubble = document.getElementById(`${id}-bubble`);
+    if (bubble) bubble.textContent = text;
+    msgDiv = document.getElementById(id);
+  } else {
+    const chat = document.getElementById('chat');
+    msgDiv = document.createElement('div');
+    msgDiv.className = 'msg claude';
+    msgDiv.innerHTML = `
+      <span class="msg-label">Claude</span>
+      <div class="msg-bubble">${escHtml(text)}</div>`;
+    chat.appendChild(msgDiv);
+  }
+  STATE.streamingEl = null;
+  saveSession();
+
+  // Audio player added by tts_chunk stream — only add manual player if no chunks arrived
+  if (audioUrl && msgDiv && !msgDiv.querySelector('.msg-audio')) {
+    const audioDiv = document.createElement('div');
+    audioDiv.className = 'msg-audio';
+    audioDiv.innerHTML = `
+      <button class="play-btn" onclick="toggleAudio(this,'${audioUrl}')">▶</button>
+      <div class="audio-progress" onclick="seekAudio(event,this)">
+        <div class="audio-progress-bar"></div>
+      </div>
+      <span class="audio-time">0:00</span>`;
+    msgDiv.appendChild(audioDiv);
+  }
+
+  // Add copy button if not already present
+  if (msgDiv && !msgDiv.querySelector('.msg-actions')) {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.innerHTML = '<button class="msg-copy-btn" onclick="copyMsgText(this)">📋 Copy</button>';
+    msgDiv.appendChild(actions);
+  }
+
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+}
+
+function updateMessageBubble(id, text) {
+  const bubble = document.getElementById(`${id}-bubble`);
+  if (bubble) bubble.textContent = text;
+  STATE.streamingEl = null;
+}
+
+// ============================================================
+//  TTS Streaming — Web Audio API (iOS-safe, one context reused)
+// ============================================================
+const ttsQueue = [];
+let ttsPlaying = false;
+let ttsCurrentAudio = null; // current BufferSourceNode
+let ttsChunkUrls = [];
+let ttsConsecutiveErrors = 0;
+let _ttsCtx = null; // shared AudioContext
+
+function _getTtsCtx() {
+  if (!_ttsCtx || _ttsCtx.state === 'closed') {
+    _ttsCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return _ttsCtx;
+}
+
+// Call from any user gesture to unlock iOS audio — once unlocked stays unlocked
+function unlockTtsAudio() {
+  try {
+    const ctx = _getTtsCtx();
+    if (ctx.state === 'suspended') ctx.resume();
+  } catch(e) {}
+}
+
+function debugLog(message) {
+  console.log('[TTS]', message);
+  if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+    try {
+      STATE.ws.send(JSON.stringify({ type: 'debug_log', message: '[TTS] ' + message }));
+    } catch(e) {}
+  }
+}
+
+function handleTtsChunk(msg) {
+  if (STATE.wsReplay) return;  // не воспроизводим старое аудио при реконнекте
+  const url = msg.audio_url;
+  const idx = msg.chunk_index;
+  const total = msg.total_chunks;
+  setStatus(`TTS ${idx + 1}/${total}...`, 80 + Math.round((idx / total) * 15));
+
+  ttsQueue.push(url);
+  ttsChunkUrls.push(url);
+  document.getElementById('tts-stop-btn').style.display = 'inline-block';
+
+  debugLog(`chunk queued ${idx + 1}/${total}, queue size=${ttsQueue.length}, playing=${ttsPlaying}`);
+
+  if (!ttsPlaying) {
+    playNextTtsChunk();
+  }
+}
+
+function handleTtsDone() {
+  setStatus('Готов');
+  // Attach replay player to the last Claude message
+  if (ttsChunkUrls.length > 0) {
+    const msgs = document.querySelectorAll('#chat .msg.claude');
+    const lastMsg = msgs[msgs.length - 1];
+    if (lastMsg && !lastMsg.querySelector('.msg-audio')) {
+      const urls = JSON.stringify(ttsChunkUrls);
+      const audioDiv = document.createElement('div');
+      audioDiv.className = 'msg-audio';
+      audioDiv.innerHTML = `
+        <button class="play-btn" onclick="replayTtsChunks(this)">▶</button>
+        <div class="audio-progress" onclick="seekAudio(event,this)">
+          <div class="audio-progress-bar"></div>
+        </div>
+        <span class="audio-time">0:00</span>`;
+      audioDiv.dataset.ttsUrls = urls;
+      lastMsg.appendChild(audioDiv);
+    }
+  }
+  ttsChunkUrls = [];
+
+  // AUTO LIVE: ждём пока все чанки доиграют, потом включаем микрофон (только в live режиме)
+  if (STATE.autoLive && STATE.mode === 'live' && !STATE.isRecording) {
+    const waitForTtsThenRecord = () => {
+      if (!STATE.autoLive || STATE.isRecording || STATE.isProcessing) return;
+      if (ttsPlaying || ttsQueue.length > 0) {
+        setTimeout(waitForTtsThenRecord, 300);
+        return;
+      }
+      startRecording();
+    };
+    setTimeout(waitForTtsThenRecord, 300);
+  }
+}
+
+function replayTtsChunks(btn) {
+  const container = btn.closest('.msg-audio');
+  const urls = JSON.parse(container.dataset.ttsUrls || '[]');
+  if (urls.length === 0) return;
+
+  // If already playing from this button, stop
+  if (btn.classList.contains('playing')) {
+    stopTts();
+    btn.classList.remove('playing');
+    btn.textContent = '▶';
+    return;
+  }
+
+  // Stop any other playback
+  stopTts();
+
+  // Queue all chunks
+  ttsQueue.push(...urls);
+  ttsPlaying = false;
+  btn.classList.add('playing');
+  btn.textContent = '⏹';
+
+  // Override completion to reset button
+  const origBtn = btn;
+  const _checkDone = setInterval(() => {
+    if (!ttsPlaying && ttsQueue.length === 0) {
+      clearInterval(_checkDone);
+      origBtn.classList.remove('playing');
+      origBtn.textContent = '▶';
+    }
+  }, 300);
+
+  playNextTtsChunk();
+}
+
+function playNextTtsChunk() {
+  if (ttsQueue.length === 0) {
+    ttsPlaying = false;
+    ttsCurrentAudio = null;
+    ttsConsecutiveErrors = 0;
+    document.getElementById('tts-stop-btn').style.display = 'none';
+    debugLog('queue empty, playback done');
+    // Mobile fix: trigger auto-restart directly when audio physically finishes
+    // (handles case where WS tts_done is unreliable on mobile)
+    if (STATE.autoLive && STATE.mode === 'live' && !STATE.isRecording && !STATE.isProcessing) {
+      setTimeout(() => {
+        if (STATE.autoLive && STATE.mode === 'live' && !STATE.isRecording && !STATE.isProcessing) {
+          debugLog('[mobile] auto-live restart from playNextTtsChunk');
+          startRecording();
+        }
+      }, 300);
+    }
+    return;
+  }
+
+  ttsPlaying = true;
+  const url = ttsQueue.shift();
+  debugLog(`playing chunk: ${url.split('/').pop()}, remaining=${ttsQueue.length}`);
+
+  (async () => {
+    try {
+      const ctx = _getTtsCtx();
+      if (ctx.state === 'suspended') await ctx.resume();
+
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const arrayBuf = await resp.arrayBuffer();
+      const audioBuf = await ctx.decodeAudioData(arrayBuf);
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuf;
+      source.connect(ctx.destination);
+      ttsCurrentAudio = source;
+      ttsConsecutiveErrors = 0;
+
+      source.onended = () => {
+        if (ttsCurrentAudio !== source) return; // already handled by fallback
+        debugLog(`chunk ended: ${url.split('/').pop()}`);
+        ttsCurrentAudio = null;
+        playNextTtsChunk();
+      };
+      source.start();
+      // Mobile fallback: onended may not fire on iOS/Android
+      const _durationMs = (audioBuf.duration + 0.5) * 1000;
+      setTimeout(() => {
+        if (ttsCurrentAudio === source) {
+          debugLog(`[mobile] onended fallback: ${url.split('/').pop()}`);
+          source.onended = null;
+          ttsCurrentAudio = null;
+          playNextTtsChunk();
+        }
+      }, _durationMs);
+    } catch(err) {
+      ttsConsecutiveErrors++;
+      debugLog(`chunk ERROR consecutive=${ttsConsecutiveErrors}: ${err.message}`);
+      ttsCurrentAudio = null;
+
+      if (ttsConsecutiveErrors >= 2) {
+        debugLog('too many errors — waiting for user gesture');
+        ttsQueue.unshift(url);
+        ttsPlaying = false;
+        showTapToResume();
+        return;
+      }
+      playNextTtsChunk();
+    }
+  })();
+}
+
+function showTapToResume() {
+  document.getElementById('tts-resume-btn').style.display = 'inline-block';
+}
+
+function resumeTtsAfterBlock() {
+  document.getElementById('tts-resume-btn').style.display = 'none';
+  unlockTtsAudio();
+  if (_ttsCtx && _ttsCtx.state === 'suspended') {
+    _ttsCtx.resume().then(() => {
+      if (ttsQueue.length > 0) playNextTtsChunk();
+    });
+  } else if (ttsQueue.length > 0) {
+    playNextTtsChunk();
+  }
+}
+
+function stopTts() {
+  ttsQueue.length = 0;
+  ttsConsecutiveErrors = 0;
+  if (ttsCurrentAudio) {
+    try { ttsCurrentAudio.stop(); } catch(e) {}
+    ttsCurrentAudio = null;
+  }
+  ttsChunkUrls = [];
+  ttsPlaying = false;
+  document.getElementById('tts-stop-btn').style.display = 'none';
+  document.getElementById('tts-resume-btn').style.display = 'none';
+  setStatus('Готов');
+}
+
+// Suspend AudioContext when page goes hidden (phone lock / app switch)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && ttsPlaying) {
+    debugLog('page hidden while playing — suspending TTS');
+    if (ttsCurrentAudio) {
+      try { ttsCurrentAudio.stop(); } catch(e) {}
+      ttsCurrentAudio = null;
+    }
+    if (_ttsCtx) _ttsCtx.suspend();
+    ttsPlaying = false;
+    showTapToResume();
+  }
+});
+
+const audioInstances = new Map();
+
+function setupAudioPlayer(audio, container) {
+  const btn = container.querySelector('.play-btn');
+  const progressBar = container.querySelector('.audio-progress-bar');
+  const timeEl = container.querySelector('.audio-time');
+  audioInstances.set(btn, audio);
+  audio.ontimeupdate = () => {
+    if (audio.duration) {
+      progressBar.style.width = (audio.currentTime / audio.duration * 100) + '%';
+      timeEl.textContent = formatTime(audio.currentTime);
+    }
+  };
+  audio.onended = () => {
+    btn.classList.remove('playing'); btn.textContent = '▶';
+    progressBar.style.width = '0%';
+  };
+}
+
+function toggleAudio(btn, url) {
+  let audio = audioInstances.get(btn);
+  if (!audio) {
+    audio = new Audio(url);
+    setupAudioPlayer(audio, btn.closest('.msg-audio'));
+  }
+  if (audio.paused) {
+    audioInstances.forEach((a, b) => {
+      if (a !== audio && !a.paused) { a.pause(); b.classList.remove('playing'); b.textContent = '▶'; }
+    });
+    audio.play();
+    btn.classList.add('playing'); btn.textContent = '⏸';
+  } else {
+    audio.pause(); btn.classList.remove('playing'); btn.textContent = '▶';
+  }
+}
+
+function seekAudio(event, el) {
+  const btn = el.closest('.msg-audio').querySelector('.play-btn');
+  const audio = audioInstances.get(btn);
+  if (!audio || !audio.duration) return;
+  const rect = el.getBoundingClientRect();
+  audio.currentTime = ((event.clientX - rect.left) / rect.width) * audio.duration;
+}
+
+function formatTime(s) {
+  return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`;
+}
+
+// ============================================================
+//  Статус
+// ============================================================
+function setStatus(msg, progress = -1) {
+  document.getElementById('status-text').textContent = msg;
+  if (progress >= 0) document.getElementById('progress-fill').style.width = progress + '%';
+}
+
+// ============================================================
+//  Вспомогательные
+// ============================================================
+function getSupportedMimeType() {
+  for (const t of ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4']) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return '';
+}
+
+function getExtension(mime) {
+  if (mime.includes('webm')) return '.webm';
+  if (mime.includes('ogg')) return '.ogg';
+  if (mime.includes('mp4')) return '.mp4';
+  return '.webm';
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;').replace(/\n/g,'<br>');
+}
+
+// ============================================================
+//  Вложения (файл / фото)
+// ============================================================
+function handleFileSelect(input) {
+  if (input.files && input.files.length > 0) {
+    const remaining = 10 - STATE.attachedFiles.length;
+    const toAdd = Array.from(input.files).slice(0, remaining);
+    toAdd.forEach(f => STATE.attachedFiles.push(f));
+    renderAttachmentPreview();
+    input.value = '';
+  }
+}
+
+function renderAttachmentPreview() {
+  const files = STATE.attachedFiles;
+  const bar = document.getElementById('attachment-bar');
+  const preview = document.getElementById('attachment-preview');
+  if (files.length === 0) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  preview.innerHTML = files.map((file, i) => {
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      return `<div style="position:relative;display:inline-block">
+        <img src="${url}" alt="" style="height:48px;border-radius:6px;object-fit:cover">
+        <span onclick="removeAttachment(${i})" style="position:absolute;top:-4px;right:-4px;background:#333;color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">✕</span>
+      </div>`;
+    }
+    return `<span style="font-size:20px">📄</span>`;
+  }).join('') + `<span style="font-size:12px;color:#a0a0b0;margin-left:4px">${files.length}/10</span>`;
+  document.querySelectorAll('.attach-btn').forEach(b => {
+    if (b.textContent.trim() === '📎') b.classList.add('has-file');
+  });
+}
+
+function removeAttachment(index) {
+  STATE.attachedFiles.splice(index, 1);
+  renderAttachmentPreview();
+  if (STATE.attachedFiles.length === 0) {
+    document.querySelectorAll('.attach-btn').forEach(b => b.classList.remove('has-file'));
+  }
+}
+
+function clearAttachment() {
+  STATE.attachedFiles = [];
+  document.getElementById('attachment-bar').style.display = 'none';
+  document.getElementById('attachment-preview').innerHTML = '';
+  document.querySelectorAll('.attach-btn').forEach(b => b.classList.remove('has-file'));
+  document.getElementById('file-input').value = '';
+  document.getElementById('camera-input').value = '';
+}
+
+// ============================================================
+//  Новый чат
+// ============================================================
+async function newChat() {
+  if (!confirm('Начать новый диалог? История разговора будет очищена.')) return;
+
+  try {
+    const fd = new FormData();
+    fd.append('ws_id', STATE.wsId);
+    const res = await fetch('/api/history/clear', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      // Stop any active recording and clean up audio state
+      if (STATE.isRecording) stopRecording();
+      stopTts();
+      if (STATE.mediaRecorder && STATE.mediaRecorder.state !== 'inactive') {
+        try { STATE.mediaRecorder.stop(); } catch(_) {}
+      }
+      if (STATE.stream) { STATE.stream.getTracks().forEach(t => t.stop()); STATE.stream = null; }
+      if (STATE.audioCtx) { try { STATE.audioCtx.close(); } catch(_) {} STATE.audioCtx = null; }
+      STATE.mediaRecorder = null;
+      STATE.audioChunks = [];
+      STATE.isRecording = false;
+      STATE.isProcessing = false;
+
+      // Очищаем чат в UI
+      const chat = document.getElementById('chat');
+      chat.innerHTML = `
+        <div class="msg claude">
+          <span class="msg-label">Claude</span>
+          <div class="msg-bubble">Новый диалог начат. Чем могу помочь?</div>
+        </div>`;
+      STATE.streamingEl = null;
+      audioInstances.clear();
+      clearSavedSession();
+      setStatus('Новый диалог', 0);
+      setTimeout(() => setStatus('Готов'), 1500);
+    }
+  } catch (e) {
+    setStatus('Ошибка очистки истории');
+  }
+}
+
+// ============================================================
+//  Board of Directors — Smart Form
+// ============================================================
+
+const BOARD_STATE = {
+  loadedProfile: null,
+  companies: [],
+  projects: [],
+};
+
+async function loadBoardCompanies() {
+  try {
+    const res = await fetch('/api/board/companies');
+    const data = await res.json();
+    if (data.ok) {
+      BOARD_STATE.companies = data.companies;
+      const dl = document.getElementById('company-suggestions');
+      if (dl) {
+        dl.innerHTML = '';
+        data.companies.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.company_name;
+          dl.appendChild(opt);
+        });
+      }
+    }
+  } catch(e) {}
+}
+
+let _companyInputTimer = null;
+function onCompanyInput(value) {
+  clearTimeout(_companyInputTimer);
+  _companyInputTimer = setTimeout(() => loadCompanyProfile(value.trim()), 500);
+}
+
+async function loadCompanyProfile(companyName) {
+  if (!companyName) { clearMemoryProfile(); return; }
+  const known = BOARD_STATE.companies.find(c =>
+    c.company_name.toLowerCase() === companyName.toLowerCase()
+  );
+  if (!known) {
+    clearMemoryProfile();
+    const fs = document.getElementById('financials-section');
+    if (fs) fs.style.display = 'block';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/board/company/${encodeURIComponent(companyName)}/profile`);
+    const d = await res.json();
+    if (d.ok && d.profile) {
+      BOARD_STATE.loadedProfile = d.profile.gate_input || {};
+      const badge = document.getElementById('memory-badge');
+      if (badge) {
+        badge.style.display = 'flex';
+        const txt = document.getElementById('memory-badge-text');
+        if (txt) txt.textContent = `${known.profile_summary || 'Profile loaded'} · ${known.session_count || 0} sessions`;
+      }
+      const fs = document.getElementById('financials-section');
+      if (fs) fs.style.display = 'none';
+      await loadProjectsForCompany(companyName);
+    } else {
+      clearMemoryProfile();
+      const fs = document.getElementById('financials-section');
+      if (fs) fs.style.display = 'block';
+    }
+  } catch(e) {
+    clearMemoryProfile();
+    const fs = document.getElementById('financials-section');
+    if (fs) fs.style.display = 'block';
+  }
+}
+
+function clearMemoryProfile() {
+  BOARD_STATE.loadedProfile = null;
+  const badge = document.getElementById('memory-badge');
+  if (badge) badge.style.display = 'none';
+  const ps = document.getElementById('project-selector');
+  if (ps) ps.style.display = 'none';
+}
+
+async function loadProjectsForCompany(companyName) {
+  try {
+    const res = await fetch(`/api/board/projects?company_name=${encodeURIComponent(companyName)}`);
+    const d = await res.json();
+    if (d.ok && d.projects.length > 0) {
+      BOARD_STATE.projects = d.projects;
+      const sel = document.getElementById('bf-project');
+      if (sel) {
+        sel.innerHTML = '<option value="">— General —</option>';
+        d.projects.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.project_id;
+          opt.textContent = p.phase ? `${p.name} (${p.phase})` : p.name;
+          sel.appendChild(opt);
+        });
+      }
+      const ps = document.getElementById('project-selector');
+      if (ps) ps.style.display = 'block';
+    } else {
+      const ps = document.getElementById('project-selector');
+      if (ps) ps.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+function showNewProjectDialog() {
+  const d = document.getElementById('new-project-dialog');
+  if (d) d.style.display = 'flex';
+}
+function closeNewProjectDialog() {
+  const d = document.getElementById('new-project-dialog');
+  if (d) d.style.display = 'none';
+}
+
+async function createProject() {
+  const name = document.getElementById('new-proj-name').value.trim();
+  const company = document.getElementById('bf-company').value.trim();
+  if (!name || !company) return;
+  try {
+    const res = await fetch('/api/board/projects', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        company_name: company,
+        phase: document.getElementById('new-proj-phase').value.trim(),
+        description: document.getElementById('new-proj-desc').value.trim(),
+      }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      closeNewProjectDialog();
+      await loadProjectsForCompany(company);
+      const sel = document.getElementById('bf-project');
+      if (sel) sel.value = d.project.project_id;
+    }
+  } catch(e) { alert('Failed to create project'); }
+}
+
+function getFormData() {
+  const lp = BOARD_STATE.loadedProfile || {};
+  const isMemory = !!BOARD_STATE.loadedProfile;
+  const g = id => document.getElementById(id);
+  const val = id => { const el = g(id); return el ? el.value.trim() : ''; };
+
+  return {
+    company_name: val('bf-company'),
+    problem_statement: val('bf-problem'),
+    project_id: (g('bf-project') ? g('bf-project').value : '') || null,
+    loaded_from_memory: isMemory,
+    current_stage: val('bf-stage') || lp.current_stage || null,
+    tech_stack: val('bf-tech') || lp.tech_stack || null,
+    market_size: val('bf-market') || lp.market_size || null,
+    competitors: val('bf-competitors') || lp.competitors || null,
+    target_audience: val('bf-audience') || lp.target_audience || null,
+    team_size: parseInt(val('bf-team-size')) || lp.team_size || null,
+    team_description: val('bf-team-desc') || lp.team_description || null,
+    additional_context: val('bf-context') || null,
+    revenue: val('bf-revenue') || lp.revenue || null,
+    expenses: val('bf-expenses') || lp.expenses || null,
+    runway_months: parseFloat(val('bf-runway')) || lp.runway_months || null,
+    funding: val('bf-funding') || lp.funding || null,
+  };
+}
+
+async function submitBoard() {
+  if (STATE.boardProcessing) return;
+
+  const data = getFormData();
+  const errEl = document.getElementById('board-errors');
+
+  const errors = [];
+  if (!data.company_name) errors.push('Company name is required');
+  if (!data.problem_statement || data.problem_statement.length < 10)
+    errors.push('Problem statement must be at least 10 characters');
+  if (!data.loaded_from_memory) {
+    if (!data.revenue && !data.expenses && !data.runway_months && !data.funding)
+      errors.push('At least one financial metric is required (or select a known company to auto-load profile)');
+  }
+
+  if (errors.length) {
+    errEl.style.display = 'block';
+    errEl.textContent = errors.join('. ');
+    return;
+  }
+  errEl.style.display = 'none';
+
+  STATE.boardProcessing = true;
+  document.getElementById('board-submit-btn').disabled = true;
+
+  // Reset results
+  resetBoardResults();
+
+  // Show progress
+  document.getElementById('board-progress').style.display = 'block';
+  setProgressStep('directors', 'active');
+
+  try {
+    const res = await fetch('/api/board/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, ws_id: STATE.wsId }),
+    });
+
+    const result = await res.json();
+
+    if (result.ok) {
+      STATE.boardSessionId = result.session.id;
+      renderBoardSession(result.session);
+    } else {
+      const errorMsg = result.errors ? result.errors.join('. ') : (result.error || 'Unknown error');
+      errEl.style.display = 'block';
+      errEl.textContent = errorMsg;
+      setProgressStep('directors', 'error');
+    }
+  } catch (e) {
+    errEl.style.display = 'block';
+    errEl.textContent = 'Connection error: ' + e.message;
+    setProgressStep('directors', 'error');
+  } finally {
+    STATE.boardProcessing = false;
+    document.getElementById('board-submit-btn').disabled = false;
+  }
+}
+
+function resetBoardResults() {
+  document.getElementById('director-cards').innerHTML = '';
+  document.getElementById('director-cards').style.display = 'none';
+  // Reset Round 2
+  const r2Container = document.getElementById('round2-cards');
+  // Keep the label, remove cards
+  const r2Label = r2Container.querySelector('.round2-label');
+  r2Container.innerHTML = '';
+  if (r2Label) r2Container.appendChild(r2Label);
+  r2Container.style.display = 'none';
+  // Rest
+  document.getElementById('conflicts-section').style.display = 'none';
+  document.getElementById('conflicts-list').innerHTML = '';
+  document.getElementById('ceo-section').style.display = 'none';
+  document.getElementById('ceo-response').textContent = '';
+  document.getElementById('ceo-duration').textContent = '';
+  document.getElementById('board-total-time').textContent = '';
+  document.getElementById('board-followup').style.display = 'none';
+  // Reset progress steps
+  ['directors', 'round2', 'conflicts', 'ceo'].forEach(s => setProgressStep(s, ''));
+  // Reset audio queue
+  STATE.boardAudioQueue = [];
+  STATE.boardAudioPlaying = false;
+}
+
+function setProgressStep(step, status) {
+  const el = document.getElementById(`ps-${step}`);
+  const icon = document.getElementById(`ps-${step}-icon`);
+  if (!el) return;
+  el.className = 'progress-step ' + status;
+  if (status === 'active') icon.innerHTML = '<span class="spinner"></span>';
+  else if (status === 'done') icon.textContent = '\u2713';
+  else if (status === 'error') icon.textContent = '\u2717';
+  else icon.textContent = '\u25CB';
+}
+
+// WebSocket handlers for Board
+function handleBoardStatus(message) {
+  if (message.includes('Round 1') || message.includes('analyzing independently')) {
+    setProgressStep('directors', 'active');
+  } else if (message.includes('Round 2') || message.includes('debating')) {
+    setProgressStep('directors', 'done');
+    setProgressStep('round2', 'active');
+  } else if (message.includes('conflict') || message.includes('Conflict')) {
+    setProgressStep('round2', 'done');
+    setProgressStep('conflicts', 'active');
+  } else if (message.includes('CEO') || message.includes('recommendation') || message.includes('Claude')) {
+    setProgressStep('conflicts', 'done');
+    setProgressStep('ceo', 'active');
+  } else if (message.includes('completed')) {
+    setProgressStep('ceo', 'done');
+  }
+}
+
+function handleRound2Complete(response) {
+  const container = document.getElementById('round2-cards');
+  container.style.display = 'flex';
+  const card = renderRound2Card(response);
+  container.appendChild(card);
+}
+
+function handleRound2Audio(role, audioUrl) {
+  const container = document.getElementById('r2-audio-' + role.toLowerCase());
+  if (container) {
+    showBoardAudioPlayer(container, audioUrl);
+  }
+  STATE.boardAudioQueue.push({ type: 'round2', role, audioUrl });
+  playNextBoardAudio();
+}
+
+function handleRound2Status(message) {
+  // Update progress with which director is debating
+  const stepEl = document.getElementById('ps-round2');
+  if (stepEl) {
+    const span = stepEl.querySelector('span:last-child');
+    if (span) span.textContent = 'Round 2: ' + message;
+  }
+}
+
+function renderRound2Card(r2) {
+  const card = document.createElement('div');
+  card.className = 'round2-card';
+  const roleClass = r2.role.toLowerCase();
+  card.setAttribute('data-role', roleClass);
+
+  const roleColors = { cso: '#60a5fa', cfo: '#4ade80', cto: '#f472b6' };
+  const roleColor = roleColors[roleClass] || '#a78bfa';
+
+  let agreementsHtml = '';
+  if (r2.agreements && r2.agreements.length) {
+    agreementsHtml = '<div class="r2-section"><div class="r2-section-title agreements">Agreements</div>' +
+      '<ul class="r2-list agreements">' +
+      r2.agreements.map(a => `<li>${escHtml(a)}</li>`).join('') + '</ul></div>';
+  }
+
+  let challengesHtml = '';
+  if (r2.challenges && r2.challenges.length) {
+    challengesHtml = '<div class="r2-section"><div class="r2-section-title challenges">Challenges</div>' +
+      '<ul class="r2-list challenges">' +
+      r2.challenges.map(c =>
+        `<li>${escHtml(c.point)}<span class="challenge-target"> (to ${escHtml(c.target_director)}, ${escHtml(c.severity)})</span></li>`
+      ).join('') + '</ul></div>';
+  }
+
+  let questionsHtml = '';
+  if (r2.questions_for_others && r2.questions_for_others.length) {
+    questionsHtml = '<div class="r2-section"><div class="r2-section-title questions">Questions</div>' +
+      '<ul class="r2-list questions">' +
+      r2.questions_for_others.map(q =>
+        `<li>${escHtml(q.question)}<span class="challenge-target"> (to ${escHtml(q.target_director)})</span></li>`
+      ).join('') + '</ul></div>';
+  }
+
+  let insightsHtml = '';
+  if (r2.cross_domain_insights && r2.cross_domain_insights.length) {
+    insightsHtml = '<div class="r2-section"><div class="r2-section-title insights">Cross-domain Insights</div>' +
+      '<ul class="r2-list insights">' +
+      r2.cross_domain_insights.map(i => `<li>${escHtml(i)}</li>`).join('') + '</ul></div>';
+  }
+
+  let recsHtml = '';
+  if (r2.revised_recommendations && r2.revised_recommendations.length) {
+    recsHtml = '<div class="r2-section"><div class="director-section-title">Revised Recommendations</div>' +
+      '<ul class="director-list">' +
+      r2.revised_recommendations.map(r => `<li>${escHtml(r)}</li>`).join('') + '</ul></div>';
+  }
+
+  let errorHtml = '';
+  if (r2.error) {
+    errorHtml = `<div style="color:#e55;font-size:12px;margin-top:6px;">Error: ${escHtml(r2.error)}</div>`;
+  }
+
+  card.innerHTML = `
+    <div class="director-card-header">
+      <span class="director-role" style="color:${roleColor}">${escHtml(r2.role)} (Round 2)</span>
+      <span class="director-model">${escHtml(r2.model)}</span>
+      <span class="director-duration">${r2.duration_seconds}s</span>
+    </div>
+    <div class="r2-revised-position">${escHtml(r2.revised_position)}</div>
+    <div class="director-audio" id="r2-audio-${roleClass}" style="display:none;">
+      <button class="play-btn" onclick="toggleBoardAudio(this)">&#9654;</button>
+      <div class="audio-progress" onclick="seekBoardAudio(event,this)">
+        <div class="audio-progress-bar"></div>
+      </div>
+      <span class="audio-time">0:00</span>
+    </div>
+    ${agreementsHtml}
+    ${challengesHtml}
+    ${questionsHtml}
+    ${insightsHtml}
+    ${recsHtml}
+    ${errorHtml}
+  `;
+
+  if (r2.audio_url) {
+    showBoardAudioPlayer(card.querySelector('.director-audio'), r2.audio_url);
+  }
+
+  return card;
+}
+
+function handleDirectorComplete(director) {
+  const container = document.getElementById('director-cards');
+  container.style.display = 'flex';
+  const card = renderDirectorCard(director);
+  container.appendChild(card);
+}
+
+let ceoStreamText = '';
+function handleCeoOutput(line) {
+  const section = document.getElementById('ceo-section');
+  section.style.display = 'block';
+  const resp = document.getElementById('ceo-response');
+  ceoStreamText += line;
+  resp.textContent = ceoStreamText;
+  // Auto-scroll board view
+  const bv = document.getElementById('board-view');
+  bv.scrollTop = bv.scrollHeight;
+}
+
+function renderBoardSession(session) {
+  // Round 1 Directors
+  const container = document.getElementById('director-cards');
+  if (session.directors && session.directors.length) {
+    container.style.display = 'flex';
+    // Only render cards not already rendered via WebSocket
+    if (container.children.length === 0) {
+      session.directors.forEach(d => container.appendChild(renderDirectorCard(d)));
+    }
+  }
+  setProgressStep('directors', 'done');
+
+  // Round 2 Debate
+  if (session.round2_responses && session.round2_responses.length) {
+    const r2Container = document.getElementById('round2-cards');
+    r2Container.style.display = 'flex';
+    // Only render if not already rendered via WS
+    if (r2Container.querySelectorAll('.round2-card').length === 0) {
+      session.round2_responses.forEach(r2 => r2Container.appendChild(renderRound2Card(r2)));
+    }
+  }
+  setProgressStep('round2', 'done');
+
+  // Conflicts
+  if (session.conflicts && session.conflicts.length) {
+    const cs = document.getElementById('conflicts-section');
+    cs.style.display = 'block';
+    const cl = document.getElementById('conflicts-list');
+    cl.innerHTML = session.conflicts.map(c => `
+      <div class="conflict-item">
+        <div class="conflict-header">
+          <span class="conflict-type">${escHtml(c.type)}</span>
+          <span class="conflict-severity">Severity: ${escHtml(c.severity)}</span>
+          <span class="conflict-directors">${c.directors.map(escHtml).join(' vs ')}</span>
+        </div>
+        <div class="conflict-desc">${escHtml(c.description)}</div>
+      </div>
+    `).join('');
+  }
+  setProgressStep('conflicts', 'done');
+
+  // CEO Recommendation
+  if (session.ceo_decision) {
+    const cs = document.getElementById('ceo-section');
+    cs.style.display = 'block';
+    document.getElementById('ceo-response').textContent = session.ceo_decision.full_response || session.ceo_decision.summary;
+    document.getElementById('ceo-duration').textContent =
+      `CEO response time: ${session.ceo_decision.duration_seconds}s`;
+
+    // CEO audio (from final response if not already shown via WS)
+    if (session.ceo_decision.audio_url && !document.getElementById('audio-ceo')) {
+      handleCeoAudio(session.ceo_decision.audio_url);
+    }
+  }
+  setProgressStep('ceo', 'done');
+
+  // Total time
+  if (session.total_duration_seconds) {
+    document.getElementById('board-total-time').textContent =
+      `Total session time: ${session.total_duration_seconds}s`;
+  }
+
+  // Show follow-up
+  document.getElementById('board-followup').style.display = 'block';
+
+  // Reset CEO stream buffer
+  ceoStreamText = '';
+}
+
+function renderDirectorCard(d) {
+  const card = document.createElement('div');
+  card.className = 'director-card';
+
+  const roleClass = d.role.toLowerCase();
+  const roleColors = { cso: '#60a5fa', cfo: '#4ade80', cto: '#f472b6' };
+  const roleColor = roleColors[roleClass] || '#a78bfa';
+
+  let statementsHtml = '';
+  if (d.statements && d.statements.length) {
+    statementsHtml = '<div class="tagged-statements">' +
+      d.statements.map(s => `
+        <div class="tagged-stmt">
+          <span class="tag-badge tag-${s.tag}">${s.tag}</span>
+          <span>${escHtml(s.statement)}</span>
+          <span class="stmt-confidence">${Math.round(s.confidence * 100)}%</span>
+        </div>
+      `).join('') + '</div>';
+  }
+
+  let recsHtml = '';
+  if (d.recommendations && d.recommendations.length) {
+    recsHtml = '<div class="director-section-title">Recommendations</div><ul class="director-list">' +
+      d.recommendations.map(r => `<li>${escHtml(r)}</li>`).join('') + '</ul>';
+  }
+
+  let risksHtml = '';
+  if (d.risks && d.risks.length) {
+    risksHtml = '<div class="director-section-title">Risks</div><ul class="director-list">' +
+      d.risks.map(r => `<li>${escHtml(r)}</li>`).join('') + '</ul>';
+  }
+
+  let crossRisksHtml = '';
+  if (d.cross_domain_risks && d.cross_domain_risks.length) {
+    crossRisksHtml = '<div class="director-section-title" style="color:#f59e0b;">Cross-Domain Risks</div>' +
+      '<ul class="director-list" style="border-left:2px solid #f59e0b;padding-left:8px;">' +
+      d.cross_domain_risks.map(r => `<li style="color:#fbbf24;">${escHtml(r)}</li>`).join('') + '</ul>';
+  }
+
+  let scanHtml = '';
+  if (d.systems_scan && d.systems_scan.breaks_if && d.systems_scan.breaks_if.length) {
+    scanHtml = '<details style="margin-top:8px;"><summary style="cursor:pointer;color:#666;font-size:11px;">Strategy breaks if...</summary>' +
+      '<ul class="director-list" style="margin-top:4px;color:#fc8181;">' +
+      d.systems_scan.breaks_if.map(b => `<li>${escHtml(b)}</li>`).join('') + '</ul></details>';
+  }
+
+  let errorHtml = '';
+  if (d.error) {
+    errorHtml = `<div style="color:#e55;font-size:12px;margin-top:6px;">Error: ${escHtml(d.error)}</div>`;
+  }
+
+  card.setAttribute('data-role', d.role.toLowerCase());
+
+  card.innerHTML = `
+    <div class="director-card-header">
+      <span class="director-role" style="color:${roleColor}">${escHtml(d.role)}</span>
+      <span class="director-model">${escHtml(d.model)}</span>
+      <span class="director-duration">${d.duration_seconds}s</span>
+    </div>
+    <div class="director-summary">${escHtml(d.summary)}</div>
+    <div class="director-audio" id="audio-${d.role.toLowerCase()}" style="display:none;">
+      <button class="play-btn" onclick="toggleBoardAudio(this)">&#9654;</button>
+      <div class="audio-progress" onclick="seekBoardAudio(event,this)">
+        <div class="audio-progress-bar"></div>
+      </div>
+      <span class="audio-time">0:00</span>
+    </div>
+    ${statementsHtml}
+    ${recsHtml}
+    ${risksHtml}
+    ${crossRisksHtml}
+    ${scanHtml}
+    ${errorHtml}
+  `;
+
+  // If audio_url already available (from final session render)
+  if (d.audio_url) {
+    showBoardAudioPlayer(card.querySelector('.director-audio'), d.audio_url);
+  }
+
+  return card;
+}
+
+async function sendFollowup() {
+  const input = document.getElementById('followup-input');
+  const question = input.value.trim();
+  if (!question || !STATE.boardSessionId) return;
+
+  input.value = '';
+  document.getElementById('followup-btn').disabled = true;
+  ceoStreamText = '';
+  document.getElementById('ceo-response').textContent = '';
+  document.getElementById('ceo-duration').textContent = '';
+
+  try {
+    const res = await fetch('/api/board/followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: STATE.boardSessionId,
+        question,
+        ws_id: STATE.wsId,
+      }),
+    });
+
+    const result = await res.json();
+    if (result.ok && result.decision) {
+      document.getElementById('ceo-response').textContent =
+        result.decision.full_response || result.decision.summary;
+      document.getElementById('ceo-duration').textContent =
+        `CEO response time: ${result.decision.duration_seconds}s`;
+    } else {
+      document.getElementById('ceo-response').textContent =
+        'Error: ' + (result.error || 'Unknown');
+    }
+  } catch (e) {
+    document.getElementById('ceo-response').textContent = 'Error: ' + e.message;
+  } finally {
+    document.getElementById('followup-btn').disabled = false;
+  }
+}
+
+// ============================================================
+//  Board Audio (XTTS)
+// ============================================================
+const boardAudioInstances = new Map();
+
+function handleDirectorAudio(role, audioUrl) {
+  const container = document.getElementById('audio-' + role.toLowerCase());
+  if (container) {
+    showBoardAudioPlayer(container, audioUrl);
+  }
+  // Enqueue for auto-play
+  STATE.boardAudioQueue.push({ type: 'director', role, audioUrl });
+  playNextBoardAudio();
+}
+
+function handleCeoAudio(audioUrl) {
+  // Show audio player on CEO section
+  let ceoAudioEl = document.getElementById('audio-ceo');
+  if (!ceoAudioEl) {
+    const ceoSection = document.getElementById('ceo-section');
+    ceoAudioEl = document.createElement('div');
+    ceoAudioEl.className = 'ceo-audio';
+    ceoAudioEl.id = 'audio-ceo';
+    ceoAudioEl.innerHTML = `
+      <button class="play-btn" onclick="toggleBoardAudio(this)">▶</button>
+      <div class="audio-progress" onclick="seekBoardAudio(event,this)">
+        <div class="audio-progress-bar"></div>
+      </div>
+      <span class="audio-time">0:00</span>`;
+    // Insert after ceo-response
+    const ceoResp = document.getElementById('ceo-response');
+    ceoResp.parentNode.insertBefore(ceoAudioEl, ceoResp.nextSibling);
+  }
+  showBoardAudioPlayer(ceoAudioEl, audioUrl);
+
+  // Enqueue for auto-play
+  STATE.boardAudioQueue.push({ type: 'ceo', audioUrl });
+  playNextBoardAudio();
+}
+
+function showBoardAudioPlayer(container, audioUrl) {
+  container.style.display = 'flex';
+  container.setAttribute('data-audio-url', audioUrl);
+  const audio = new Audio(audioUrl);
+  const btn = container.querySelector('.play-btn');
+  boardAudioInstances.set(btn, audio);
+  setupBoardAudioPlayer(audio, container);
+}
+
+function setupBoardAudioPlayer(audio, container) {
+  const btn = container.querySelector('.play-btn');
+  const progressBar = container.querySelector('.audio-progress-bar');
+  const timeEl = container.querySelector('.audio-time');
+  audio.ontimeupdate = () => {
+    if (audio.duration) {
+      progressBar.style.width = (audio.currentTime / audio.duration * 100) + '%';
+      timeEl.textContent = formatTime(audio.currentTime);
+    }
+  };
+  audio.onended = () => {
+    btn.classList.remove('playing');
+    btn.textContent = '\u25B6';
+    progressBar.style.width = '0%';
+    // Auto-play next in queue
+    STATE.boardAudioPlaying = false;
+    playNextBoardAudio();
+  };
+}
+
+function toggleBoardAudio(btn) {
+  let audio = boardAudioInstances.get(btn);
+  if (!audio) {
+    const url = btn.closest('[data-audio-url]').getAttribute('data-audio-url');
+    audio = new Audio(url);
+    boardAudioInstances.set(btn, audio);
+    setupBoardAudioPlayer(audio, btn.closest('.director-audio, .ceo-audio'));
+  }
+  if (audio.paused) {
+    // Pause all other board audio
+    boardAudioInstances.forEach((a, b) => {
+      if (a !== audio && !a.paused) { a.pause(); b.classList.remove('playing'); b.textContent = '\u25B6'; }
+    });
+    audio.play();
+    btn.classList.add('playing');
+    btn.textContent = '\u23F8';
+  } else {
+    audio.pause();
+    btn.classList.remove('playing');
+    btn.textContent = '\u25B6';
+  }
+}
+
+function seekBoardAudio(event, el) {
+  const btn = el.closest('.director-audio, .ceo-audio').querySelector('.play-btn');
+  const audio = boardAudioInstances.get(btn);
+  if (!audio || !audio.duration) return;
+  const rect = el.getBoundingClientRect();
+  audio.currentTime = ((event.clientX - rect.left) / rect.width) * audio.duration;
+}
+
+function playNextBoardAudio() {
+  if (STATE.boardAudioPlaying || STATE.boardAudioQueue.length === 0) return;
+
+  STATE.boardAudioPlaying = true;
+  const item = STATE.boardAudioQueue.shift();
+  const audioUrl = item.audioUrl;
+
+  // Find the matching player button
+  let container;
+  if (item.type === 'director') {
+    container = document.getElementById('audio-' + item.role.toLowerCase());
+  } else if (item.type === 'round2') {
+    container = document.getElementById('r2-audio-' + item.role.toLowerCase());
+  } else {
+    container = document.getElementById('audio-ceo');
+  }
+
+  if (!container) {
+    STATE.boardAudioPlaying = false;
+    playNextBoardAudio();
+    return;
+  }
+
+  const btn = container.querySelector('.play-btn');
+  let audio = boardAudioInstances.get(btn);
+  if (!audio) {
+    audio = new Audio(audioUrl);
+    boardAudioInstances.set(btn, audio);
+    setupBoardAudioPlayer(audio, container);
+  }
+
+  // Pause all others
+  boardAudioInstances.forEach((a, b) => {
+    if (a !== audio && !a.paused) { a.pause(); b.classList.remove('playing'); b.textContent = '\u25B6'; }
+  });
+
+  audio.currentTime = 0;
+  audio.play().catch(() => { STATE.boardAudioPlaying = false; });
+  btn.classList.add('playing');
+  btn.textContent = '\u23F8';
+}
+
+// ============================================================
+//  Board Mic (Voice Input → STT → fill field)
+// ============================================================
+async function boardMicRecord(targetFieldId) {
+  const micBtn = document.getElementById('mic-' + targetFieldId) || event.target;
+  const field = document.getElementById(targetFieldId);
+
+  // If already recording, stop
+  if (STATE.boardMicRecorder && STATE.boardMicRecorder.state === 'recording') {
+    STATE.boardMicRecorder.stop();
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = getSupportedMimeType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    const chunks = [];
+
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+    recorder.onstop = async () => {
+      micBtn.classList.remove('recording');
+      stream.getTracks().forEach(t => t.stop());
+      STATE.boardMicRecorder = null;
+
+      if (chunks.length === 0) return;
+
+      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+      const formData = new FormData();
+      formData.append('audio', blob, 'board_voice' + getExtension(mimeType || 'audio/webm'));
+
+      try {
+        micBtn.textContent = '...';
+        const res = await fetch('/api/stt', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok && data.transcript) {
+          // Append to existing text
+          const existing = field.value.trim();
+          field.value = existing ? existing + ' ' + data.transcript : data.transcript;
+        }
+      } catch (e) {
+        console.error('STT error:', e);
+      } finally {
+        micBtn.textContent = '\uD83C\uDFA4';
+      }
+    };
+
+    STATE.boardMicRecorder = recorder;
+    recorder.start();
+    micBtn.classList.add('recording');
+
+    // Auto-stop after 30 seconds
+    setTimeout(() => {
+      if (recorder.state === 'recording') recorder.stop();
+    }, 30000);
+
+  } catch (e) {
+    console.error('Mic access denied:', e);
+  }
+}
+
+// ============================================================
+//  Инициализация
+// ============================================================
+connectWS();
+loadVoices();
+
+// ---- Escape key: stop generation ----
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && STATE.isProcessing) {
+    e.preventDefault();
+    stopGeneration();
+  }
+});
+
+// ---- Auto-restore session (no prompt) ----
+restoreSession();
+
+setMode('step');
+
+// ---- Back-button protection (pushState) ----
+history.pushState({ page: 'claude' }, '', location.href);
+window.addEventListener('popstate', () => {
+  history.pushState({ page: 'claude' }, '', location.href);
+});
+
+// ---- beforeunload warning ----
+window.addEventListener('beforeunload', (e) => {
+  const chat = document.getElementById('chat');
+  if (chat && chat.querySelectorAll('.msg').length > 1) {
+    e.preventDefault();
+    saveSession();
+  }
+});
+
+// ---- Save on visibility change (tab switch / app switch) ----
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    saveSession();
+  } else if (document.visibilityState === 'visible') {
+    // Returned to tab — reconnect WS immediately if not connected
+    if (!STATE.ws || STATE.ws.readyState === WebSocket.CLOSED || STATE.ws.readyState === WebSocket.CLOSING) {
+      connectWS();
+    }
+  }
+});
+
+// ── Telegram file toast ──────────────────────────────────────────────────────
+let _tgCurrentFile = null;
+let _tgToastTimer = null;
+
+function tgShowToast(filename, path, fileType) {
+  _tgCurrentFile = { filename, path, fileType };
+  const toast = document.getElementById('tg-toast');
+  const nameEl = document.getElementById('tg-toast-name');
+  const emoji = { photo: '🖼️', video: '🎬', audio: '🎵', voice: '🎤', pdf: '📕', document: '📄' }[fileType] || '📎';
+  nameEl.textContent = emoji + ' ' + filename;
+  toast.classList.add('show');
+  clearTimeout(_tgToastTimer);
+  _tgToastTimer = setTimeout(tgDismiss, 15000);
+}
+
+function tgDismiss() {
+  document.getElementById('tg-toast').classList.remove('show');
+  clearTimeout(_tgToastTimer);
+}
+
+function tgInsertFile() {
+  if (!_tgCurrentFile) return;
+  const ta = document.getElementById('transcript-input');
+  if (ta) {
+    const ref = `[файл: ${_tgCurrentFile.filename}]`;
+    const pos = ta.selectionStart || ta.value.length;
+    ta.value = ta.value.slice(0, pos) + ref + ta.value.slice(pos);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = pos + ref.length;
+  }
+  tgDismiss();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+{
+  "_comment": "Objection library — adapt responses to your specific product/service",
+  "_instructions": "Replace PRODUCT, BENEFIT, METRIC with real values before deploying",
+
+  "objections": [
+    {
+      "id": "not_interested",
+      "triggers": ["not interested", "don't need it", "no thanks", "remove me"],
+      "response": "I completely understand. Before I let you go — can I ask what you're currently using to solve [pain_point]? I just want to make sure I'm not wasting your time.",
+      "fallback_if_rejected_again": "No problem at all. I'll remove you from my list. Have a great day!"
+    },
+    {
+      "id": "too_busy",
+      "triggers": ["not a good time", "too busy", "in a meeting", "call back later"],
+      "response": "Totally fine. When's a better time — would tomorrow morning or Thursday afternoon work for a quick 10-minute call?",
+      "follow_state": "close"
+    },
+    {
+      "id": "already_have_solution",
+      "triggers": ["already have", "using someone else", "happy with current", "we work with"],
+      "response": "That's good to know. A lot of our clients were using [competitor] before switching. What would have to be true for you to consider an alternative — what's the one thing your current solution doesn't do well?",
+      "follow_state": "qualify"
+    },
+    {
+      "id": "too_expensive",
+      "triggers": ["too expensive", "can't afford", "out of budget", "costs too much", "price"],
+      "response": "I hear you on cost. What if I told you most clients recover the investment in the first [timeframe]? Can I show you the numbers in a quick demo — if it doesn't make sense financially, I'll be the first to tell you.",
+      "follow_state": "close"
+    },
+    {
+      "id": "need_to_think",
+      "triggers": ["need to think", "let me think", "I'll get back", "check with team"],
+      "response": "Of course. What specifically do you need to think through? I want to make sure you have everything you need to make the right decision.",
+      "follow_state": "qualify"
+    },
+    {
+      "id": "send_info",
+      "triggers": ["send me info", "send an email", "email me", "send materials"],
+      "response": "Happy to. I'll send it right after our call. But I want to make sure I send the right thing — what specific outcome are you most interested in: [option_a] or [option_b]?",
+      "follow_state": "qualify"
+    },
+    {
+      "id": "not_decision_maker",
+      "triggers": ["not my decision", "talk to my boss", "check with manager", "procurement"],
+      "response": "Totally makes sense. Who would be the right person to include in a conversation? And is there anything I should know about how they prefer to evaluate new solutions?",
+      "follow_state": "qualify"
+    },
+    {
+      "id": "bad_timing",
+      "triggers": ["wrong time of year", "Q4 budget", "next quarter", "after the holiday"],
+      "response": "Understood — budget timing matters. The reason I'm reaching out now is so that when [next quarter] comes, you already know if this is worth allocating budget to. Can I show you a 10-minute overview?",
+      "follow_state": "close"
+    },
+    {
+      "id": "doubt_results",
+      "triggers": ["does it actually work", "prove it", "show me results", "skeptical"],
+      "response": "Fair question. [Company_name] saw [specific_metric] in [timeframe]. Would it help to talk to one of our clients directly? I can set that up.",
+      "follow_state": "close"
+    },
+    {
+      "id": "ai_skepticism",
+      "triggers": ["AI doesn't work", "tried AI before", "don't trust AI", "not ready for AI"],
+      "response": "I get it — there's a lot of hype and a lot of disappointment in the AI space right now. What specifically didn't work when you tried it before? I want to make sure we're solving the right problem.",
+      "follow_state": "qualify"
+    }
+  ],
+
+  "universal_responses": {
+    "acknowledge_prefix": [
+      "That's a fair point.",
+      "I appreciate you being direct.",
+      "Totally understand.",
+      "I hear you."
+    ],
+    "bridge_phrases": [
+      "Here's what I'm seeing with clients in your space:",
+      "Let me give you a different angle on that:",
+      "The reason most people feel that way initially is:"
+    ]
+  }
+}
