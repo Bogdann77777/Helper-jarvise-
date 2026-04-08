@@ -96,14 +96,18 @@ MEMORY_TIER_DECISIONS = 1200  # T4: decision ledger with outcomes (feedback loop
 # --- Agent Mode (Step mode with tools + auto-approve) ---
 AGENT_MODE_ENABLED = True
 AGENT_MODEL = "claude-sonnet-4-6"  # "claude-sonnet-4-6" или "claude-opus-4-6"
-AGENT_SYSTEM_PROMPT = ""  # Optional: append to system prompt (empty = use default)
-AGENT_INACTIVITY_TIMEOUT = 300  # секунд (5 мин) — интервал проверки: если процесс жив, продолжаем ждать (heartbeat)
-AGENT_MAX_TIMEOUT = 7200        # секунд (2 часа) — абсолютный потолок, аварийный стоп
+AGENT_SYSTEM_PROMPT = """For simple conversational messages (greetings, thanks, short questions), respond with plain text only — do NOT use any tools. Only use tools when the user explicitly asks to perform a task, edit files, run code, or search for information."""  # Optional: append to system prompt (empty = use default)
+AGENT_INACTIVITY_TIMEOUT = 60   # секунд (1 мин) — если процесс не выдаёт вывод 60с → таймаут → UI разблокируется
+AGENT_MAX_TIMEOUT = 1800        # секунд (30 мин) — абсолютный потолок, аварийный стоп
 AGENT_BUFFER_LIMIT = 50 * 1024 * 1024  # 50MB — JSON-строки с Read огромных файлов
 
 # --- Telegram Sender (отправка файлов/сообщений пользователю) ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = 1873549647  # Bogdan_Lysetskyi
+
+# --- Task Manager Bot (отдельный бот только для задач/расписания) ---
+TASK_BOT_TOKEN = os.environ.get("TASK_BOT_TOKEN", "")
+TASK_CHAT_ID   = 1873549647  # тот же пользователь
 
 # --- Vast.ai Serverless (MultiTalk) ---
 VASTAI_API_KEY     = os.environ.get("VASTAI_API_KEY", "")

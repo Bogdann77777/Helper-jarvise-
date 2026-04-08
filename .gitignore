@@ -1,49 +1,105 @@
-# Virtual environment
-.venv/
-venv/
-env/
-
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
 *.pyd
 
-# Claude Code internals
-.claude/
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Env
-.env
-*.env
+# PyInstaller
+*.manifest
+*.spec
 
-# Logs
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
 *.log
-logs/
+local_settings.py
+db.sqlite3
 
-# Runtime state
-buffer_store.json
-tg_inbox.json
-nul
+# Flask stuff:
+instance/
+.webassets-cache
 
-# Database
-tasks.db
+# Scrapy stuff:
+.scrapy
 
-# Generated content
-outputs/
-static/audio/
-static/uploads/
+# Sphinx documentation
+docs/_build/
 
-# Backups
-*.bak
-*.bak_*
+# PyBuilder vol
+target/
 
-# Voices (user audio samples — privacy)
-voices/
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery signals module reimports
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# dotenv
+.env
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Misc
-STOP_VAST_MONITOR
-_restart_tmp.bat
+# Logs
+*.log
+logs/
+
+# DB & state
+*.db
+*.pid
+*_state.json
+.agent-memory/
+chat_log.json
+*.session
+test_*.txt
+test_*.log
+
+# IDE
+.vscode/
+.idea/
