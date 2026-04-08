@@ -272,7 +272,71 @@ Return ONLY the JSON object as your final message.\
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Agentic loop
+#  Research phase — runs tool loop, returns collected intelligence as text
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_research_phase(
+    product_category: str,
+    market: str,
+    platform: str,
+) -> str:
+    """
+    Runs the agentic tool loop to gather live market intelligence.
+    Returns a compact text summary of all tool results for use in the output phase.
+    """
+    research_prompt = (
+        f"Research {platform} copywriting intelligence for {product_category} in {market}. "
+        f"Use all 3 tools: search_winning_hooks, search_competitor_copy, benchmark_copy_performance."
+    )
+    messages: list[dict] = [{"role": "user", "content": research_prompt}]
+    collected: list[str] = []
+
+    for tool_round in range(MAX_TOOL_ROUNDS):
+        print(f"[copy-agent] Research round {tool_round}...", flush=True)
+        resp = requests.post(
+            OPENROUTER_BASE_URL,
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": CLAUDE_MODEL, "messages": messages, "max_tokens": 500, "tools": COPY_AGENT_TOOLS},
+            timeout=60,
+        )
+        if not resp.ok:
+            print(f"[copy-agent] Research API error {resp.status_code}: {resp.text[:300]}", flush=True)
+            break
+        response_data = resp.json()
+        message = response_data["choices"][0]["message"]
+        stop_reason = response_data["choices"][0].get("finish_reason", "stop")
+        tool_calls = message.get("tool_calls", [])
+
+        if not tool_calls or stop_reason == "stop":
+            break
+
+        print(f"[copy-agent] Tools: {[tc['function']['name'] for tc in tool_calls]}", flush=True)
+        assistant_msg: dict = {"role": "assistant", "content": message.get("content")}
+        assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        tool_results = []
+        for tc in tool_calls:
+            tool_name = tc["function"]["name"]
+            tool_input = json.loads(tc["function"]["arguments"])
+            print(f"[copy-agent]   → {tool_name}", flush=True)
+            result_text = _dispatch_tool(tool_name, tool_input)
+            collected.append(f"[{tool_name}]\n{result_text}")
+            tool_results.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
+
+        messages.extend(tool_results)
+        time.sleep(1)
+
+        # If all 3 tools called, research is complete
+        called_names = {tc["function"]["name"] for tc in tool_calls}
+        if called_names >= {"search_winning_hooks", "search_competitor_copy", "benchmark_copy_performance"}:
+            break
+
+    return "\n\n".join(collected) if collected else ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_copywriting_agent(
@@ -286,148 +350,31 @@ def run_copywriting_agent(
     market: str = "",
 ) -> CopywritingOutput:
     """
-    Agentic copywriting: Claude researches winning hooks/competitor copy via Perplexity tools,
-    then generates grounded copy variants. Returns same CopywritingOutput schema as before.
+    Phase 1: Agent researches winning hooks + competitor copy + benchmarks via Perplexity tools.
+    Phase 2: Structured Claude call generates schema-compliant CopywritingOutput using research.
     """
-    print("[copy-agent] Starting agentic copywriting loop...", flush=True)
+    print("[copy-agent] Phase 1: Research...", flush=True)
+    live_research = _run_research_phase(product_category, market, platform)
+    print(f"[copy-agent] Research complete: {len(live_research)} chars", flush=True)
 
-    # Initial user message
-    user_prompt = f"""\
-Create {platform} ad copy for: {product_description}
-Category: {product_category} | Market: {market}
-
-VOC INTELLIGENCE (speak this language, address these pains):
-{voc_brief}
-
-COMPETITOR CONTEXT:
-Dominant narrative (differentiate from this): {dominant_narrative}
-White space to exploit: {white_space}
-
-CUSTOMER JOURNEY CONTEXT:
-{journey_context}
-
-START by using your research tools to find real winning hooks and competitor copy.
-Then generate copy variants grounded in actual market data.
-Return the final JSON output after completing your research.\
-"""
-
-    messages: list[dict] = [
-        {"role": "user", "content": user_prompt}
-    ]
-
-    tool_round = 0
-    final_json_str: Optional[str] = None
-
-    while tool_round <= MAX_TOOL_ROUNDS:
-        print(f"[copy-agent] API call (round {tool_round})...", flush=True)
-
-        payload = {
-            "model": CLAUDE_MODEL,
-            "messages": messages,
-            "max_tokens": MAX_TOKENS,
-            "tools": COPY_AGENT_TOOLS,
-        }
-        # On the last round, force text output (no more tools)
-        if tool_round >= MAX_TOOL_ROUNDS:
-            payload.pop("tools", None)
-            payload["response_format"] = {"type": "json_object"}
-
-        resp = requests.post(
-            OPENROUTER_BASE_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=120,
-        )
-        resp.raise_for_status()
-        response_data = resp.json()
-        message = response_data["choices"][0]["message"]
-        stop_reason = response_data["choices"][0].get("finish_reason", "stop")
-
-        # Append assistant message
-        messages.append({"role": "assistant", "content": message.get("content") or ""})
-
-        # Check for tool calls
-        tool_calls = message.get("tool_calls", [])
-
-        if not tool_calls or stop_reason == "stop":
-            # Claude finished — extract JSON from content
-            content = message.get("content", "")
-            if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                )
-            final_json_str = content
-            print(f"[copy-agent] Agent finished after {tool_round} tool rounds", flush=True)
-            break
-
-        # Execute tool calls
-        print(f"[copy-agent] Tool calls: {[tc['function']['name'] for tc in tool_calls]}", flush=True)
-        tool_results = []
-        for tc in tool_calls:
-            tool_name = tc["function"]["name"]
-            tool_input = json.loads(tc["function"]["arguments"])
-            print(f"[copy-agent]   → {tool_name}({list(tool_input.values())})", flush=True)
-            result_text = _dispatch_tool(tool_name, tool_input)
-            tool_results.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result_text,
-            })
-
-        messages.extend(tool_results)
-        tool_round += 1
-
-        # Small pause between rounds
-        if tool_round <= MAX_TOOL_ROUNDS:
-            time.sleep(1)
-
-    # Parse and validate output
-    return _parse_copy_output(final_json_str, platform)
-
-
-def _parse_copy_output(raw: Optional[str], platform: str) -> CopywritingOutput:
-    """Parse JSON string → CopywritingOutput, with fallback on parse failure."""
-    from pydantic import ValidationError
-
-    if not raw:
-        raise RuntimeError("Copy agent returned empty response")
-
-    # Clean markdown wrappers
-    content = raw.strip()
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-
-    # Find JSON object
-    start = content.find("{")
-    end = content.rfind("}") + 1
-    if start >= 0 and end > start:
-        content = content[start:end]
-
-    try:
-        data = json.loads(content)
-        result = CopywritingOutput.model_validate(data)
-        print("[copy-agent] ✓ Output validated", flush=True)
-        return result
-    except (json.JSONDecodeError, ValidationError) as e:
-        print(f"[copy-agent] Parse error: {e} — retrying with explicit JSON request", flush=True)
-        # One more attempt with explicit JSON demand
-        return _fallback_copy_generation(raw, platform)
-
-
-def _fallback_copy_generation(context: str, platform: str) -> CopywritingOutput:
-    """Fallback: ask Claude to produce clean JSON from the research context."""
+    print("[copy-agent] Phase 2: Structured copy generation...", flush=True)
     from marketing_factory.prompts import _claude_with_validation, COPY_SYSTEM, _build_copy_user_prompt
-    print("[copy-agent] Falling back to direct Claude call...", flush=True)
+
+    # Append live research to the copy prompt
+    base_prompt = _build_copy_user_prompt(
+        product_description, platform, voc_brief, dominant_narrative, white_space, journey_context
+    )
+    enhanced_prompt = (
+        f"{base_prompt}\n\n"
+        f"LIVE MARKET RESEARCH (use these real findings to inform your copy):\n"
+        f"{live_research[:3000]}"
+    ) if live_research else base_prompt
+
     return _claude_with_validation(
         system_prompt=COPY_SYSTEM,
-        user_prompt=(
-            f"Based on this research context, generate the copy JSON:\n\n{context[:3000]}"
-        ),
-        schema_name="copywriting_fallback",
+        user_prompt=enhanced_prompt,
+        schema_name="copywriting_agent",
         pydantic_model=CopywritingOutput,
     )
+
+

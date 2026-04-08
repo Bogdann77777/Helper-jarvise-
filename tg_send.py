@@ -17,11 +17,29 @@ import requests
 from pathlib import Path
 
 # Конфигурация
-try:
-    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-except ImportError:
-    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    TELEGRAM_CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
+def _load_config():
+    try:
+        from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+        return TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    except Exception:
+        pass
+    # Fallback: read .env directly (no dotenv dependency)
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
+    env_file = Path(__file__).parent / ".env"
+    if env_file.exists() and (not token or not chat_id):
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("TELEGRAM_BOT_TOKEN=") and not token:
+                token = line.split("=", 1)[1].strip()
+            elif line.startswith("TELEGRAM_CHAT_ID=") and not chat_id:
+                try:
+                    chat_id = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+    return token, chat_id
+
+TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID = _load_config()
 
 API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 

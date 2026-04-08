@@ -24,15 +24,35 @@ logger = logging.getLogger(__name__)
 
 class _SessionState:
     """Tracks Claude CLI session for one client (browser tab)."""
-    __slots__ = ('cli_session_id', 'agent_session_id', 'lock')
+    __slots__ = ('cli_session_id', 'agent_session_id', 'lock', 'active_process')
 
     def __init__(self):
         self.cli_session_id: str | None = None      # --print mode session
         self.agent_session_id: str | None = None     # agent mode session
         self.lock = asyncio.Lock()                    # per-client lock
+        self.active_process = None                    # current subprocess (for cancel)
 
 
 _sessions: dict[str, _SessionState] = {}
+
+# Pending user injections: client_id → list of messages to inject between tool calls
+_pending_injections: dict[str, list[str]] = {}
+
+
+def inject_user_message(client_id: str, text: str):
+    """Queue a user message to be injected between tool calls of the running agent."""
+    if client_id not in _pending_injections:
+        _pending_injections[client_id] = []
+    _pending_injections[client_id].append(text)
+    logger.info(f"Agent [{client_id[:8]}] injection queued: {text[:60]}")
+
+
+def _pop_injection(client_id: str) -> str | None:
+    """Pop the next pending injection for this client, or None."""
+    msgs = _pending_injections.get(client_id)
+    if msgs:
+        return msgs.pop(0)
+    return None
 
 
 def _get_state(client_id: str) -> _SessionState:
@@ -195,239 +215,365 @@ async def run_claude_agent_streaming(
         if new_session:
             state.agent_session_id = None
 
-        cmd = _build_agent_cmd(state, new_session=new_session, system_prompt=system_prompt)
+        # _inject_text is set when user injects a message between tool calls.
+        # We loop instead of recursing to avoid re-acquiring state.lock (deadlock).
+        _inject_text: str | None = None
+        _overload_retries = 0
+        _MAX_OVERLOAD_RETRIES = 3
+        _OVERLOAD_BACKOFF = [10, 20, 40]  # seconds
 
-        is_new = state.agent_session_id is None
-        logger.info(
-            f"Claude Agent [{client_id[:8]}]: "
-            f"{'новая сессия' if is_new else f'resume ({state.agent_session_id[:12]})'}, "
-            f"команда: {' '.join(cmd)}, длина запроса: {len(text)} символов"
-        )
+        while True:  # restart loop — handles injection without lock deadlock
+            _current_text = _inject_text if _inject_text is not None else text
+            _inject_restart = _inject_text is not None
+            _inject_text = None
 
-        if on_status:
-            session_info = "новая сессия" if is_new else "продолжение"
-            await on_status(f"Claude Agent ({session_info})...")
-
-        try:
-            # CREATE_NEW_PROCESS_GROUP isolates the child from Ctrl+C/window-close signals
-            _flags = {"creationflags": 0x00000200} if sys.platform == "win32" else {}
-            # Force UTF-8 in all child Python processes (fixes charmap errors on Windows)
-            _env = os.environ.copy()
-            _env["PYTHONUTF8"] = "1"
-            _env["PYTHONIOENCODING"] = "utf-8"
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=AGENT_BUFFER_LIMIT,
-                env=_env,
-                **_flags,
+            cmd = _build_agent_cmd(
+                state,
+                new_session=(new_session and not _inject_restart),
+                system_prompt=system_prompt,
             )
 
-            process.stdin.write(text.encode("utf-8"))
-            await process.stdin.drain()
-            process.stdin.close()
-
-            import time as _time
-
-            inactivity_limit = timeout or AGENT_INACTIVITY_TIMEOUT
-            max_deadline = _time.monotonic() + AGENT_MAX_TIMEOUT
-
-            final_result_text = ""
-            last_text_content = ""
-            last_tool_name = ""
-            tool_use_count = 0
-            event_count = 0
-            start_time = _time.monotonic()
-            last_activity = start_time
-            tool_start_time = None
-
-            while True:
-                now = _time.monotonic()
-                elapsed = now - start_time
-
-                # Hard ceiling — emergency stop (2 hours default)
-                if now > max_deadline:
-                    logger.warning(f"Agent [{client_id[:8]}] MAX TIMEOUT ({AGENT_MAX_TIMEOUT}s) after {elapsed:.1f}s, {tool_use_count} tools")
-                    process.kill()
-                    raise asyncio.TimeoutError()
-
-                try:
-                    line = await asyncio.wait_for(
-                        process.stdout.readline(),
-                        timeout=inactivity_limit,
-                    )
-                except asyncio.TimeoutError:
-                    silent_sec = _time.monotonic() - last_activity
-                    elapsed = _time.monotonic() - start_time
-
-                    # Check if the process is still alive
-                    if process.returncode is not None:
-                        logger.warning(
-                            f"Agent [{client_id[:8]}] process dead (rc={process.returncode}) after "
-                            f"silence {silent_sec:.0f}s, elapsed={elapsed:.1f}s"
-                        )
-                        break
-
-                    # Process alive — log heartbeat and keep waiting
-                    elapsed_min = int(elapsed // 60)
-                    logger.info(
-                        f"Agent [{client_id[:8]}] HEARTBEAT: жив, молчит {silent_sec:.0f}s, "
-                        f"elapsed={elapsed_min}m{int(elapsed%60)}s, "
-                        f"last_tool={last_tool_name}, tools={tool_use_count}"
-                    )
-                    if on_status:
-                        await on_status(f"Agent думает... ({elapsed_min} мин)")
-
-                    continue
-
-                if not line:
-                    break
-
-                decoded = line.decode("utf-8", errors="replace").strip()
-                if not decoded:
-                    continue
-
-                # Activity! Reset inactivity timer
-                last_activity = _time.monotonic()
-                event_count += 1
-
-                # Parse NDJSON event
-                try:
-                    event = json.loads(decoded)
-                except json.JSONDecodeError:
-                    logger.debug(f"Agent [{client_id[:8]}]: non-JSON line: {decoded[:200]}")
-                    continue
-
-                event_type = event.get("type", "")
-                event_subtype = event.get("subtype", "")
-                elapsed = _time.monotonic() - start_time
-
-                # Log every event type for visibility
-                if event_type == "system":
-                    model = event.get("model", "?")
-                    tools = event.get("tools", [])
-                    session_id = event.get("session_id", "?")
-
-                    # Capture session_id for --resume on next call
-                    if session_id and session_id != "?":
-                        state.agent_session_id = session_id
-                        logger.info(f"Agent [{client_id[:8]}] captured session_id={session_id[:12]}")
-                        if on_session_id:
-                            await on_session_id(session_id)
-
-                    logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] system/{event_subtype}: model={model}, tools={len(tools)}, session={session_id[:12]}")
-                    if on_status:
-                        await on_status(f"Agent подключён (модель: {model})")
-
-                elif event_type == "assistant":
-                    message = event.get("message", {})
-                    content_blocks = message.get("content", [])
-                    for block in content_blocks:
-                        block_type = block.get("type", "")
-
-                        if block_type == "tool_use":
-                            tool_name = block.get("name", "unknown")
-                            tool_input = block.get("input", {})
-                            last_tool_name = tool_name
-                            tool_use_count += 1
-                            tool_start_time = _time.monotonic()
-
-                            input_summary = _summarize_tool_input(tool_name, tool_input)
-                            logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] tool #{tool_use_count}: {tool_name} → {input_summary}")
-
-                            if on_tool_use:
-                                await on_tool_use(tool_name, tool_input)
-                            if on_status:
-                                await on_status(f"Tool #{tool_use_count}: {tool_name} → {input_summary}")
-
-                        elif block_type == "text":
-                            text_content = block.get("text", "")
-                            if text_content:
-                                last_text_content = text_content
-                                logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] text: {len(text_content)} chars — {text_content[:150]}{'...' if len(text_content) > 150 else ''}")
-                                if on_text:
-                                    await on_text(text_content)
-
-                elif event_type == "user":
-                    tool_elapsed = ""
-                    if tool_start_time:
-                        tool_ms = (_time.monotonic() - tool_start_time) * 1000
-                        tool_elapsed = f" ({tool_ms:.0f}ms)"
-                        tool_start_time = None
-
-                    content_blocks = event.get("message", {}).get("content", [])
-                    summary = _summarize_tool_result(content_blocks, last_tool_name)
-                    logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] tool_result: {last_tool_name}{tool_elapsed} → {summary}")
-
-                    if on_tool_result and last_tool_name:
-                        await on_tool_result(last_tool_name, summary)
-                    if on_status:
-                        await on_status(f"✓ {last_tool_name}{tool_elapsed}")
-
-                elif event_type == "result":
-                    final_result_text = event.get("result", "")
-                    result_subtype = event.get("subtype", "")
-                    result_errors = event.get("errors", [])
-
-                    # Capture stdout errors (Claude CLI reports errors here, not stderr)
-                    if result_subtype == "error_during_execution" and result_errors:
-                        stdout_error = "; ".join(result_errors)
-                        # Stale --resume session → clear it and retry as new session
-                        if "No conversation found" in stdout_error:
-                            logger.warning(
-                                f"Agent [{client_id[:8]}] stale session_id={state.agent_session_id}, "
-                                f"clearing and will retry as new session"
-                            )
-                            state.agent_session_id = None
-                        raise RuntimeError(f"Claude Agent ошибка: {stdout_error}")
-
-                    result_info = {
-                        "result": final_result_text,
-                        "subtype": result_subtype,
-                        "cost_usd": event.get("total_cost_usd", 0),
-                        "duration_ms": event.get("duration_ms", 0),
-                        "turns": tool_use_count,
-                        "num_events": event_count,
-                    }
-                    logger.info(
-                        f"Agent [{client_id[:8]}] [{elapsed:.1f}s] DONE: {len(final_result_text)} chars, "
-                        f"cost=${result_info['cost_usd']:.4f}, "
-                        f"duration={result_info['duration_ms']}ms, "
-                        f"tools={tool_use_count}, events={event_count}"
-                    )
-                    if on_result:
-                        await on_result(result_info)
-
-                else:
-                    logger.debug(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] event: {event_type}/{event_subtype}")
-
-            await process.wait()
-
-            if process.returncode != 0:
-                stderr_data = await process.stderr.read()
-                error = stderr_data.decode("utf-8", errors="replace").strip()
-                # Claude CLI writes errors to stdout as JSON, not stderr — stderr may be empty
-                if not error:
-                    error = "(ошибка в stdout JSON выше)"
-                raise RuntimeError(f"Claude Agent ошибка (код {process.returncode}): {error}")
-
-            response = final_result_text or last_text_content
-            logger.info(f"Claude Agent [{client_id[:8]}] ответил: {len(response)} символов")
+            is_new = state.agent_session_id is None
+            logger.info(
+                f"Claude Agent [{client_id[:8]}]: "
+                f"{'новая сессия' if is_new else f'resume ({state.agent_session_id[:12]})'}, "
+                f"команда: {' '.join(cmd)}, длина запроса: {len(_current_text)} символов"
+            )
 
             if on_status:
-                await on_status("Ответ от Claude Agent получен")
+                session_info = "новая сессия" if is_new else "продолжение"
+                await on_status(f"Claude Agent ({session_info})...")
 
-            return response
+            try:
+                # CREATE_NEW_PROCESS_GROUP isolates the child from Ctrl+C/window-close signals
+                _flags = {"creationflags": 0x00000200} if sys.platform == "win32" else {}
+                # Force UTF-8 in all child Python processes (fixes charmap errors on Windows)
+                _env = os.environ.copy()
+                _env["PYTHONUTF8"] = "1"
+                _env["PYTHONIOENCODING"] = "utf-8"
 
-        except asyncio.TimeoutError:
-            elapsed = _time.monotonic() - start_time
-            raise RuntimeError(f"Claude Agent таймаут после {elapsed:.0f} сек ({tool_use_count} tools)")
-        except FileNotFoundError:
-            raise RuntimeError(
-                f"Claude CLI не найден. Проверь CLAUDE_CLI_PATH в config.py (сейчас: '{CLAUDE_CLI_PATH}')"
-            )
+                # ── Read settings.json env and inject into subprocess (belt+suspenders) ──
+                import json as _j_cfg, pathlib as _p_cfg
+                _senv: dict = {}
+                try:
+                    _sp = _p_cfg.Path.home() / ".claude" / "settings.json"
+                    if _sp.exists():
+                        _senv = _j_cfg.loads(_sp.read_text(encoding="utf-8")).get("env", {})
+                except Exception as _e_cfg:
+                    logger.warning(f"Agent [{client_id[:8]}] settings.json read error: {_e_cfg}")
+
+                _base_url = _senv.get("ANTHROPIC_BASE_URL", "<anthropic default>")
+                _model_cfg = _senv.get("ANTHROPIC_MODEL", "<not set>")
+                _auth_set = "SET" if _senv.get("ANTHROPIC_AUTH_TOKEN") else "<not set>"
+                logger.info(
+                    f"Agent [{client_id[:8]}] settings.json env → "
+                    f"BASE_URL={_base_url} MODEL={_model_cfg} AUTH_TOKEN={_auth_set}"
+                )
+                # Explicitly inject so subprocess has correct routing regardless of Claude CLI settings.json parsing
+                for _k_env in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"):
+                    if _k_env in _senv:
+                        _env[_k_env] = _senv[_k_env]
+                        logger.info(f"Agent [{client_id[:8]}] injecting env {_k_env}={_senv[_k_env][:60] if _k_env != 'ANTHROPIC_AUTH_TOKEN' else '****'}")
+
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    limit=AGENT_BUFFER_LIMIT,
+                    env=_env,
+                    **_flags,
+                )
+
+                state.active_process = process  # store for cancel support
+
+                # ── Real-time stderr reader (logs Claude CLI errors immediately) ──
+                async def _read_stderr_bg(_proc=process, _cid=client_id):
+                    try:
+                        while True:
+                            _line = await asyncio.wait_for(_proc.stderr.readline(), timeout=300.0)
+                            if not _line:
+                                break
+                            _decoded = _line.decode("utf-8", errors="replace").strip()
+                            if _decoded:
+                                logger.warning(f"Agent [{_cid[:8]}] STDERR: {_decoded[:300]}")
+                    except asyncio.TimeoutError:
+                        pass
+                    except Exception as _se:
+                        logger.debug(f"Agent [{_cid[:8]}] stderr reader done: {_se}")
+                asyncio.create_task(_read_stderr_bg())
+                process.stdin.write(_current_text.encode("utf-8"))
+                await process.stdin.drain()
+                process.stdin.close()
+
+                import time as _time
+
+                inactivity_limit = timeout or AGENT_INACTIVITY_TIMEOUT
+                max_deadline = _time.monotonic() + AGENT_MAX_TIMEOUT
+
+                final_result_text = ""
+                last_text_content = ""
+                last_tool_name = ""
+                last_tool_summary = ""
+                tool_use_count = 0
+                event_count = 0
+                start_time = _time.monotonic()
+                last_activity = start_time
+                tool_start_time = None
+                success_result = False  # True when we receive a successful 'result' event
+                _first_output_logged = False
+
+                while True:  # inner event loop
+                    now = _time.monotonic()
+                    elapsed = now - start_time
+
+                    # Hard ceiling — emergency stop
+                    if now > max_deadline:
+                        logger.warning(f"Agent [{client_id[:8]}] MAX TIMEOUT ({AGENT_MAX_TIMEOUT}s) after {elapsed:.1f}s, {tool_use_count} tools")
+                        process.kill()
+                        raise asyncio.TimeoutError()
+
+                    try:
+                        line = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=inactivity_limit,
+                        )
+                    except asyncio.TimeoutError:
+                        silent_sec = _time.monotonic() - last_activity
+                        elapsed = _time.monotonic() - start_time
+
+                        # Check if the process is still alive
+                        if process.returncode is not None:
+                            logger.warning(
+                                f"Agent [{client_id[:8]}] process dead (rc={process.returncode}) after "
+                                f"silence {silent_sec:.0f}s, elapsed={elapsed:.1f}s"
+                            )
+                            break
+
+                        # Process alive — log heartbeat and keep waiting
+                        elapsed_min = int(elapsed // 60)
+                        logger.info(
+                            f"Agent [{client_id[:8]}] HEARTBEAT: жив, молчит {silent_sec:.0f}s, "
+                            f"elapsed={elapsed_min}m{int(elapsed%60)}s, "
+                            f"last_tool={last_tool_name}, tools={tool_use_count}"
+                        )
+                        if on_status:
+                            await on_status(f"Agent думает... ({elapsed_min} мин)")
+
+                        continue
+
+                    if not line:
+                        break
+
+                    decoded = line.decode("utf-8", errors="replace").strip()
+                    if not decoded:
+                        continue
+
+                    # Log first output (shows how long CLI takes before emitting anything)
+                    if not _first_output_logged:
+                        _first_output_logged = True
+                        logger.info(f"Agent [{client_id[:8]}] FIRST_OUTPUT: elapsed={_time.monotonic()-start_time:.2f}s len={len(decoded)}b preview={decoded[:80]}")
+
+                    # Activity! Reset inactivity timer
+                    last_activity = _time.monotonic()
+                    event_count += 1
+
+                    # Parse NDJSON event
+                    try:
+                        event = json.loads(decoded)
+                    except json.JSONDecodeError:
+                        logger.debug(f"Agent [{client_id[:8]}]: non-JSON line: {decoded[:200]}")
+                        continue
+
+                    event_type = event.get("type", "")
+                    event_subtype = event.get("subtype", "")
+                    elapsed = _time.monotonic() - start_time
+
+                    if event_type == "system":
+                        model = event.get("model", "?")
+                        tools = event.get("tools", [])
+                        session_id = event.get("session_id", "?")
+
+                        if session_id and session_id != "?":
+                            state.agent_session_id = session_id
+                            logger.info(f"Agent [{client_id[:8]}] captured session_id={session_id[:12]}")
+                            if on_session_id:
+                                await on_session_id(session_id)
+
+                        logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] system/{event_subtype}: model={model}, tools={len(tools)}, session={session_id[:12]}")
+                        if on_status:
+                            await on_status(f"Agent подключён (модель: {model})")
+
+                    elif event_type == "assistant":
+                        message = event.get("message", {})
+                        content_blocks = message.get("content", [])
+                        for block in content_blocks:
+                            block_type = block.get("type", "")
+
+                            if block_type == "tool_use":
+                                tool_name = block.get("name", "unknown")
+                                tool_input = block.get("input", {})
+                                last_tool_name = tool_name
+                                tool_use_count += 1
+                                tool_start_time = _time.monotonic()
+
+                                input_summary = _summarize_tool_input(tool_name, tool_input)
+                                logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] tool #{tool_use_count}: {tool_name} → {input_summary}")
+
+                                if on_tool_use:
+                                    await on_tool_use(tool_name, tool_input)
+                                if on_status:
+                                    await on_status(f"Tool #{tool_use_count}: {tool_name} → {input_summary}")
+
+                            elif block_type == "text":
+                                text_content = block.get("text", "")
+                                if text_content:
+                                    last_text_content = text_content
+                                    logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] text: {len(text_content)} chars — {text_content[:150]}{'...' if len(text_content) > 150 else ''}")
+                                    if on_text:
+                                        await on_text(text_content)
+
+                    elif event_type == "user":
+                        tool_elapsed = ""
+                        if tool_start_time:
+                            tool_ms = (_time.monotonic() - tool_start_time) * 1000
+                            tool_elapsed = f" ({tool_ms:.0f}ms)"
+                            tool_start_time = None
+
+                        content_blocks = event.get("message", {}).get("content", [])
+                        summary = _summarize_tool_result(content_blocks, last_tool_name)
+                        last_tool_summary = summary
+                        logger.info(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] tool_result: {last_tool_name}{tool_elapsed} → {summary}")
+
+                        if on_tool_result and last_tool_name:
+                            await on_tool_result(last_tool_name, summary)
+                        if on_status:
+                            await on_status(f"✓ {last_tool_name}{tool_elapsed}")
+
+                        # === INJECTION POINT ===
+                        injection = _pop_injection(client_id)
+                        if injection and state.agent_session_id:
+                            logger.info(f"Agent [{client_id[:8]}] injecting user message between tools: {injection[:80]}")
+                            try:
+                                process.kill()
+                            except Exception:
+                                pass
+                            await process.wait()
+                            state.active_process = None
+                            # Set inject text — outer while will restart without re-acquiring lock
+                            _inject_text = (
+                                f"[Сообщение от пользователя в процессе работы]: {injection}\n\n"
+                                f"Прими это к сведению и продолжай выполнять текущую задачу."
+                            )
+                            break  # exit inner event loop
+                        # === END INJECTION POINT ===
+
+                    elif event_type == "result":
+                        final_result_text = event.get("result", "")
+                        result_subtype = event.get("subtype", "")
+                        result_errors = event.get("errors", [])
+
+                        if result_subtype == "error_during_execution" and result_errors:
+                            stdout_error = "; ".join(result_errors)
+                            if "No conversation found" in stdout_error:
+                                logger.warning(
+                                    f"Agent [{client_id[:8]}] stale session_id={state.agent_session_id}, "
+                                    f"clearing and will retry as new session"
+                                )
+                                state.agent_session_id = None
+                            # 529 Overloaded — auto-retry with backoff
+                            if ("overloaded" in stdout_error.lower() or "529" in stdout_error) and _overload_retries < _MAX_OVERLOAD_RETRIES:
+                                wait = _OVERLOAD_BACKOFF[_overload_retries]
+                                _overload_retries += 1
+                                logger.warning(
+                                    f"Agent [{client_id[:8]}] API overloaded (529), retry {_overload_retries}/{_MAX_OVERLOAD_RETRIES} in {wait}s"
+                                )
+                                if on_status:
+                                    await on_status(f"API перегружен (529), повтор через {wait}с ({_overload_retries}/{_MAX_OVERLOAD_RETRIES})")
+                                try:
+                                    process.kill()
+                                except Exception:
+                                    pass
+                                await process.wait()
+                                state.active_process = None
+                                await asyncio.sleep(wait)
+                                break  # → outer while True (restart)
+                            raise RuntimeError(f"Claude Agent ошибка: {stdout_error}")
+
+                        result_info = {
+                            "result": final_result_text,
+                            "subtype": result_subtype,
+                            "cost_usd": event.get("total_cost_usd", 0),
+                            "duration_ms": event.get("duration_ms", 0),
+                            "turns": tool_use_count,
+                            "num_events": event_count,
+                        }
+                        logger.info(
+                            f"Agent [{client_id[:8]}] [{elapsed:.1f}s] DONE: {len(final_result_text)} chars, "
+                            f"cost=${result_info['cost_usd']:.4f}, "
+                            f"duration={result_info['duration_ms']}ms, "
+                            f"tools={tool_use_count}, events={event_count}"
+                        )
+                        if on_result:
+                            await on_result(result_info)
+
+                        success_result = True
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                        break
+
+                    else:
+                        logger.debug(f"Agent [{client_id[:8]}] [{elapsed:.1f}s] event: {event_type}/{event_subtype}")
+
+                # ── after inner event loop ──────────────────────────────
+                await process.wait()
+                state.active_process = None
+
+                # Injection restart: loop back without re-acquiring lock (no deadlock)
+                if _inject_text:
+                    continue  # → outer while True
+
+                if process.returncode != 0 and not success_result:
+                    stderr_data = await process.stderr.read()
+                    error = stderr_data.decode("utf-8", errors="replace").strip()
+                    if not error:
+                        error = "(ошибка в stdout JSON выше)"
+                    # 529 Overloaded in stderr — auto-retry with backoff
+                    if ("overloaded" in error.lower() or "529" in error) and _overload_retries < _MAX_OVERLOAD_RETRIES:
+                        wait = _OVERLOAD_BACKOFF[_overload_retries]
+                        _overload_retries += 1
+                        logger.warning(
+                            f"Agent [{client_id[:8]}] API overloaded (529) via stderr, retry {_overload_retries}/{_MAX_OVERLOAD_RETRIES} in {wait}s"
+                        )
+                        if on_status:
+                            await on_status(f"API перегружен (529), повтор через {wait}с ({_overload_retries}/{_MAX_OVERLOAD_RETRIES})")
+                        await asyncio.sleep(wait)
+                        continue  # → outer while True (restart)
+                    raise RuntimeError(f"Claude Agent ошибка (код {process.returncode}): {error}")
+
+                response = final_result_text or last_text_content or (
+                    f"[{last_tool_name}: {last_tool_summary}]" if last_tool_name else ""
+                )
+                logger.info(f"Claude Agent [{client_id[:8]}] ответил: {len(response)} символов")
+
+                if on_status:
+                    await on_status("Ответ от Claude Agent получен")
+
+                return response
+
+            except asyncio.TimeoutError:
+                elapsed = _time.monotonic() - start_time
+                state.active_process = None
+                raise RuntimeError(f"Claude Agent таймаут после {elapsed:.0f} сек ({tool_use_count} tools)")
+            except FileNotFoundError:
+                state.active_process = None
+                raise RuntimeError(
+                    f"Claude CLI не найден. Проверь CLAUDE_CLI_PATH в config.py (сейчас: '{CLAUDE_CLI_PATH}')"
+                )
+            finally:
+                state.active_process = None  # always clear on exit
 
 
 async def new_agent_session(client_id: str = ""):
@@ -435,6 +581,21 @@ async def new_agent_session(client_id: str = ""):
     state = _get_state(client_id)
     state.agent_session_id = None
     logger.info(f"Agent-сессия [{client_id[:8]}] сброшена")
+
+
+async def cancel_agent(client_id: str = "") -> bool:
+    """Убить текущий subprocess агента для клиента. Возвращает True если был активный процесс."""
+    state = _get_state(client_id)
+    proc = state.active_process
+    if proc is None:
+        return False
+    try:
+        proc.kill()
+        logger.info(f"Agent [{client_id[:8]}] отменён пользователем")
+    except Exception:
+        pass
+    state.active_process = None
+    return True
 
 
 def restore_agent_session(client_id: str, agent_session_id: str):
@@ -466,12 +627,16 @@ def _build_agent_cmd(state: _SessionState, new_session: bool = False, system_pro
         "--output-format", "stream-json",
     ]
 
-    if not use_openrouter:
+    if use_openrouter:
+        # OR mode: --no-session-persistence avoids loading/writing large JSONL files
+        # that cause 60-90s CPU freeze before first API call (github issues #22041, #22149, #21067)
+        # Note: --bare doesn't exist in v2.1.63
+        cmd.append("--no-session-persistence")
+    else:
         # Anthropic direct: pass model explicitly
         cmd.extend(["--model", _config.AGENT_MODEL])
-
-    if state.agent_session_id and not new_session:
-        cmd.extend(["--resume", state.agent_session_id])
+        if state.agent_session_id and not new_session:
+            cmd.extend(["--resume", state.agent_session_id])
 
     if system_prompt:
         cmd.extend(["--append-system-prompt", system_prompt])

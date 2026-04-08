@@ -55,13 +55,25 @@ def main():
         "/SC HOURLY /MO 1 /ST 08:00 /ET 22:00 /K",
     )
 
-    # 3. Bot auto-start on user login
+    # 3. Evening report — daily 18:00, Mon-Fri
+    evening_bat = bat("run_evening_report",
+                      str(ROOT / "task_manager" / "evening_report.py"))
+    schtask(
+        "CEO_EveningReport", evening_bat,
+        "/SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 18:00",
+    )
+
+    # 4. Bot auto-start on user login — via Startup folder (no admin needed)
+    import os, shutil
     bot_bat = bat("run_task_bot",
                   str(ROOT / "task_manager" / "bot_launcher.py"))
-    schtask(
-        "CEO_TaskBot_Start", bot_bat,
-        "/SC ONLOGON",
-    )
+    startup = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/Startup'
+    target = startup / 'CEO_TaskBot_Start.bat'
+    try:
+        shutil.copy2(bot_bat, str(target))
+        print(f"  \u2705 CEO_TaskBot_Start (Startup folder)")
+    except Exception as e:
+        print(f"  \u274c CEO_TaskBot_Start: {e}")
 
     print("\nГотово! Задачи зарегистрированы.")
     print("Проверить: откройте 'Планировщик задач' → папка CEO_*")

@@ -1731,6 +1731,7 @@ const STATE = {
   isProcessing: false,
   abortController: null,
   wsReplay: false,       // true во время replay буфера — блокирует авто-воспроизведение TTS
+  _bulkRestore: false,   // true во время bulk addMessage loop — подавляет per-message saveSession
   responseCompleted: false, // true когда response_complete пришёл через WS — блокирует retry
   stepQueue: [],        // queue for Step mode messages received while processing
   mediaRecorder: null,
@@ -1777,6 +1778,17 @@ function getVoiceMeta(name) {
 //  WebSocket
 // ============================================================
 function connectWS() {
+  // Kill old WS handlers before overwriting — prevents stale onclose from
+  // firing setTimeout(connectWS) and creating infinite WS reconnect loops
+  if (STATE.ws) {
+    STATE.ws.onopen    = null;
+    STATE.ws.onmessage = null;
+    STATE.ws.onerror   = null;
+    STATE.ws.onclose   = null;
+    if (STATE.ws.readyState === WebSocket.OPEN || STATE.ws.readyState === WebSocket.CONNECTING) {
+      STATE.ws.close();
+    }
+  }
   const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = `${wsProto}://${location.host}/ws/${STATE.wsId}`;
   STATE.ws = new WebSocket(wsUrl);
@@ -1848,24 +1860,33 @@ function connectWS() {
           finalizeClaudeMessage(STATE.streamingMsgId, msg.response_text, '');
           STATE.streamingMsgId = null;
         } else if (STATE.wsReplay) {
-          // Reconnect replay: создаём новое сообщение (ответ пришёл пока WS был оборван)
-          addMessage('claude', msg.response_text);
+          // Reconnect replay: добавляем только если сообщения нет в DOM (нет дубликатов)
+          const existing = [...document.querySelectorAll('#chat .msg.claude .msg-bubble')]
+            .some(el => el.textContent.trim() === msg.response_text.trim());
+          if (!existing) addMessage('claude', msg.response_text);
         }
       }
     } else if (msg.type === 'chat_history') {
-      // Restore chat from server-side log (fires when localStorage is empty / new browser session)
-      const existingMsgs = document.querySelectorAll('#chat .msg');
-      if (existingMsgs.length <= 1 && msg.msgs && msg.msgs.length > 0) {
+      // Skip stale buffered chat_history during reconnect replay —
+      // only the fresh history sent AFTER replay_end is authoritative
+      if (STATE.wsReplay) { /* ignore */ }
+      else if (msg.msgs && msg.msgs.length > 0) {
+        STATE.isProcessing = false;
+        STATE.pendingRetry = null;
+        // Server is ALWAYS the source of truth — always replace DOM with server history.
+        // localStorage is only a fast pre-load cache; server wins on every connect.
         const chat = document.getElementById('chat');
         chat.innerHTML = '';
+        STATE._bulkRestore = true;
         msg.msgs.forEach(m => addMessage(m.role, m.text));
+        STATE._bulkRestore = false;
+        saveSession();
       }
     } else if (msg.type === 'reconnect_replay_start') {
       STATE.wsReplay = true;   // блокируем TTS во время replay
+      // DO NOT clear chat — keep localStorage-restored history visible
+      // Buffer replay may only have recent events, not full history
       if (msg.count > 0) {
-        // Clear localStorage-restored messages to prevent duplicates during replay
-        const chat = document.getElementById('chat');
-        chat.innerHTML = '';
         showReconnectBanner(`📡 Переподключено`);
       }
       setTimeout(hideReconnectBanner, 5000); // auto-hide страховка
@@ -1876,7 +1897,12 @@ function connectWS() {
       if (STATE.responseCompleted) STATE.pendingRetry = null;
     } else if (msg.type === 'reconnect_no_buffer') {
       STATE.wsReplay = false;
+      STATE.isProcessing = false;
+      STATE.pendingRetry = null;
       hideReconnectBanner();
+    } else if (msg.type === 'agent_cancelled') {
+      STATE.isProcessing = false;
+      updateStepUI();
     }
   };
 
@@ -2095,10 +2121,15 @@ function sendStep() {
   }
 
   if (STATE.isProcessing) {
-    // Queue the message — instant feedback, no await needed
+    // Inject message between tool calls + add to stepQueue as fallback
     STATE.stepQueue.push(finalText);
-    addMessage('user', `⏳ ${finalText}`);
+    addMessage('user', `💬 ${finalText}`);
     _updateSendBtnQueue();
+    // Send inject request — will be delivered between tool calls
+    const fd = new FormData();
+    fd.append('ws_id', STATE.wsId);
+    fd.append('text', finalText);
+    fetch('/api/inject', { method: 'POST', body: fd }).catch(() => {});
     return;
   }
 
@@ -2135,6 +2166,16 @@ function stopGeneration() {
   if (STATE.abortController) {
     STATE.abortController.abort();
   }
+  // Kill the subprocess on the server side
+  const wsId = STATE.wsId || '';
+  if (wsId) {
+    const fd = new FormData();
+    fd.append('ws_id', wsId);
+    fetch('/api/cancel', { method: 'POST', body: fd }).catch(() => {});
+  }
+  STATE.isProcessing = false;
+  updateStepUI();
+  addMessage('system', '⏹ Задача остановлена. Можешь отправить новое сообщение.');
 }
 
 async function handleSlashCommand(text) {
@@ -2231,12 +2272,13 @@ async function handleSlashCommand(text) {
         <div class="msg-bubble">
           <div style="margin-bottom:10px;font-weight:600;">Выбери модель OpenRouter:</div>
           <div style="display:flex;flex-direction:column;gap:6px;">
-            <button onclick="switchOpenRouter('minimax/minimax-m2.5:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">1. minimax/minimax-m2.5:free <span style="opacity:.6">(бесплатная)</span></button>
-            <button onclick="switchOpenRouter('qwen/qwen3.6-plus-preview:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">2. qwen/qwen3.6-plus-preview:free <span style="opacity:.6">(бесплатная)</span></button>
-            <button onclick="switchOpenRouter('qwen/qwen3-coder:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">3. qwen/qwen3-coder:free <span style="opacity:.6">(бесплатная, для кода)</span></button>
-            <button onclick="switchOpenRouter('deepseek/deepseek-v3.2-exp')" style="padding:8px 14px;border-radius:8px;border:2px solid #f59e0b;background:transparent;color:#f59e0b;cursor:pointer;text-align:left;">4. deepseek/deepseek-v3.2-exp <span style="opacity:.6">(экспериментальная)</span></button>
-            <button onclick="switchOpenRouter('anthropic/claude-sonnet-4-5')" style="padding:8px 14px;border-radius:8px;border:2px solid #dc2626;background:transparent;color:#dc2626;cursor:pointer;text-align:left;">5. anthropic/claude-sonnet-4-5 <span style="opacity:.6">(платная)</span></button>
-            <button onclick="switchOpenRouter('openai/gpt-4o')" style="padding:8px 14px;border-radius:8px;border:2px solid #dc2626;background:transparent;color:#dc2626;cursor:pointer;text-align:left;">6. openai/gpt-4o <span style="opacity:.6">(платная)</span></button>
+            <button onclick="switchOpenRouter('deepseek/deepseek-r1-0528:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">1. deepseek/deepseek-r1-0528:free <span style="opacity:.6">(бесплатная, рассуждение)</span></button>
+            <button onclick="switchOpenRouter('meta-llama/llama-3.3-70b-instruct:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">2. meta-llama/llama-3.3-70b-instruct:free <span style="opacity:.6">(бесплатная, чат)</span></button>
+            <button onclick="switchOpenRouter('qwen/qwen3-coder:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">3. qwen/qwen3-coder:free <span style="opacity:.6">(бесплатная, код)</span></button>
+            <button onclick="switchOpenRouter('minimax/minimax-m2.5:free')" style="padding:8px 14px;border-radius:8px;border:2px solid #7c3aed;background:transparent;color:#7c3aed;cursor:pointer;text-align:left;">4. minimax/minimax-m2.5:free <span style="opacity:.6">(бесплатная)</span></button>
+            <button onclick="switchOpenRouter('deepseek/deepseek-v3.2-exp')" style="padding:8px 14px;border-radius:8px;border:2px solid #f59e0b;background:transparent;color:#f59e0b;cursor:pointer;text-align:left;">5. deepseek/deepseek-v3.2-exp <span style="opacity:.6">(платная, код)</span></button>
+            <button onclick="switchOpenRouter('google/gemini-2.5-flash-lite')" style="padding:8px 14px;border-radius:8px;border:2px solid #f59e0b;background:transparent;color:#f59e0b;cursor:pointer;text-align:left;">6. google/gemini-2.5-flash-lite <span style="opacity:.6">(платная, быстрая)</span></button>
+            <button onclick="switchOpenRouter('x-ai/grok-4.1-fast')" style="padding:8px 14px;border-radius:8px;border:2px solid #f59e0b;background:transparent;color:#f59e0b;cursor:pointer;text-align:left;">7. x-ai/grok-4.1-fast <span style="opacity:.6">(платная, быстрая)</span></button>
           </div>
         </div>`;
       chat.appendChild(div);
@@ -2250,7 +2292,10 @@ async function handleSlashCommand(text) {
       const res = await fetch('/api/anthropic', { method: 'POST' });
       const data = await res.json();
       if (data.ok) {
-        addMessage('claude', '✓ Переключено на прямой Anthropic API.\nПерезапусти сервер (/restart) чтобы применить.');
+        // Clear stale OR session before restoring Anthropic mode
+        STATE.agentSessionId = null;
+        clearSavedSession();
+        addMessage('claude', '✓ Переключено на прямой Anthropic API.\nСессия сброшена (новый контекст).\nПерезапусти сервер (/restart) чтобы применить.');
       } else {
         addMessage('claude', `Ошибка: ${data.error}`);
       }
@@ -2275,7 +2320,11 @@ async function switchOpenRouter(modelId) {
     const res = await fetch('/api/openrouter', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.ok) {
-      addMessage('claude', `✓ OpenRouter включён. Модель: ${data.model}\nПерезапусти сервер (/restart) чтобы применить.`);
+      // Clear stale session — Anthropic session IDs can't be resumed with OpenRouter models.
+      // Without this, after /restart the browser restores the old session → claude --resume sends 100K tokens.
+      STATE.agentSessionId = null;
+      clearSavedSession();
+      addMessage('claude', `✓ OpenRouter включён. Модель: ${data.model}\nСессия сброшена (новый контекст).\nПерезапусти сервер (/restart) чтобы применить.`);
     } else {
       addMessage('claude', `Ошибка: ${data.error}`);
     }
@@ -2421,8 +2470,13 @@ async function sendAudioToServer(blob) {
   if (STATE.attachedFiles.length > 0) clearAttachment();
   if (_camFrame) fd.append('attachments', _camFrame, _camFrame.name);
 
+  const voiceTimeout = setTimeout(() => {
+    if (STATE.isProcessing) STATE.isProcessing = false;  // unblock UI if voice hangs
+  }, 10 * 60 * 1000);
+
   try {
     const res = await fetch('/api/voice', { method: 'POST', body: fd });
+    clearTimeout(voiceTimeout);
     const data = await res.json();
     if (data.ok) {
       // [FIX] Fallback: show user message if WS transcript never arrived (mobile WS drop)
@@ -2503,8 +2557,16 @@ async function processText(text, existingMsgId = null) {
   STATE.attachedFiles.forEach(f => fd.append('attachments', f, f.name));
   if (STATE.attachedFiles.length > 0) clearAttachment();
 
+  // Auto-timeout: if no response in 10 min, unblock UI
+  const fetchTimeout = setTimeout(() => {
+    if (STATE.isProcessing && STATE.abortController) {
+      STATE.abortController.abort();
+    }
+  }, 10 * 60 * 1000);
+
   try {
     const res = await fetch('/api/text', { method: 'POST', body: fd, signal: STATE.abortController.signal });
+    clearTimeout(fetchTimeout);
     const data = await res.json();
     if (data.ok) {
       finalizeClaudeMessage(msgId, data.response_text, data.audio_url);
@@ -2639,6 +2701,7 @@ const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 const SESSION_MSG_LIMIT = 300; // rolling buffer — keep last N messages
 
 function saveSession() {
+  if (STATE._bulkRestore) return;  // skip during bulk restore — caller saves once at end
   try {
     const allMsgs = document.querySelectorAll('#chat .msg');
     const data = [];
@@ -2665,13 +2728,19 @@ function restoreSession() {
     if (!msgs || msgs.length === 0) return false;
     const chat = document.getElementById('chat');
     chat.innerHTML = '';
+    STATE._bulkRestore = true;
     msgs.forEach(m => addMessage(m.role, m.text));
+    STATE._bulkRestore = false;
+    saveSession();  // single save after all messages are in DOM
     if (agentSessionId) {
       STATE.agentSessionId = agentSessionId;
       const fd = new FormData();
       fd.append('ws_id', STATE.wsId);
       fd.append('agent_session_id', agentSessionId);
-      fetch('/api/session/restore', { method: 'POST', body: fd }).catch(() => {});
+      fetch('/api/session/restore', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => { if (!data.ok) { STATE.agentSessionId = null; clearSavedSession(); } })
+        .catch(() => {});
     }
     return true;
   } catch(e) { return false; }
@@ -2782,7 +2851,10 @@ function finalizeClaudeMessage(id, text, audioUrl) {
     const bubble = document.getElementById(`${id}-bubble`);
     if (bubble) bubble.textContent = text;
     msgDiv = document.getElementById(id);
-  } else {
+  }
+  // Fallback: if id provided but element not in DOM (e.g. restored from localStorage
+  // without placeholder), create new message instead of silently dropping it
+  if (!msgDiv) {
     const chat = document.getElementById('chat');
     msgDiv = document.createElement('div');
     msgDiv.className = 'msg claude';
@@ -4062,13 +4134,9 @@ window.addEventListener('popstate', () => {
   history.pushState({ page: 'claude' }, '', location.href);
 });
 
-// ---- beforeunload warning ----
-window.addEventListener('beforeunload', (e) => {
-  const chat = document.getElementById('chat');
-  if (chat && chat.querySelectorAll('.msg').length > 1) {
-    e.preventDefault();
-    saveSession();
-  }
+// ---- Save on close/navigate away ----
+window.addEventListener('beforeunload', () => {
+  saveSession();  // always save — no dialog, just persist silently
 });
 
 // ---- Save on visibility change (tab switch / app switch) ----

@@ -32,9 +32,8 @@ def main():
     tasks = get_todays_report_tasks()
     msg   = morning_report(tasks)
 
-    # Send via tg_send
-    from tg_send import tg_msg
-    ok = tg_msg(msg)
+    from task_manager.tg import tg_task_msg
+    ok = tg_task_msg(msg)
     print(f"[morning_report] Отправлен отчёт ({len(tasks)} задач), ok={ok}")
 
 

@@ -31,6 +31,7 @@ def init_db():
             due_date    TEXT,                         -- ISO "2026-04-15" or NULL
             done        INTEGER DEFAULT 0,
             priority    TEXT DEFAULT 'normal',        -- 'high' or 'normal'
+            today       INTEGER DEFAULT 0,            -- 1 = selected for today's plan
             created_at  TEXT DEFAULT (datetime('now', 'localtime')),
             updated_at  TEXT DEFAULT (datetime('now', 'localtime'))
         );
@@ -54,6 +55,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_due_date ON tasks(due_date);
         CREATE INDEX IF NOT EXISTS idx_done     ON tasks(done);
     """)
+    # migration: add today column if missing (for existing DBs)
+    try:
+        con.execute("ALTER TABLE tasks ADD COLUMN today INTEGER DEFAULT 0")
+        con.commit()
+    except Exception:
+        pass  # column already exists
     con.commit()
     con.close()
 
@@ -155,6 +162,41 @@ def update_task(task_id: int, **kwargs) -> bool:
     con.commit()
     con.close()
     return changed
+
+
+def set_today(task_id: int, flag: bool = True) -> bool:
+    """Mark/unmark task as part of today's plan."""
+    con = _conn()
+    cur = con.execute(
+        "UPDATE tasks SET today=?, updated_at=datetime('now','localtime') WHERE id=? AND done=0",
+        (1 if flag else 0, task_id)
+    )
+    changed = cur.rowcount > 0
+    con.commit()
+    con.close()
+    return changed
+
+
+def get_today_plan() -> list[dict]:
+    """Tasks marked for today's plan (today=1, not done)."""
+    con = _conn()
+    rows = con.execute("""
+        SELECT * FROM tasks
+        WHERE today = 1 AND done = 0
+        ORDER BY
+          CASE priority WHEN 'high' THEN 0 ELSE 1 END,
+          project ASC, id ASC
+    """).fetchall()
+    con.close()
+    return [dict(r) for r in rows]
+
+
+def clear_today_plan():
+    """Reset today flag on all tasks (run at end of day or morning)."""
+    con = _conn()
+    con.execute("UPDATE tasks SET today=0 WHERE today=1")
+    con.commit()
+    con.close()
 
 
 def get_task(task_id: int) -> Optional[dict]:

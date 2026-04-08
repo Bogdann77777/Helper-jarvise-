@@ -342,7 +342,71 @@ Return ONLY the JSON object as your final message.\
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Agentic loop
+#  Research phase — runs tool loop, returns collected intelligence as text
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_creative_research(platform: str, product_category: str, duration_sec: int) -> str:
+    """
+    Runs the agentic tool loop to gather live creative intelligence.
+    Returns a compact text summary of all tool results.
+    """
+    research_prompt = (
+        f"Research creative intelligence for {platform} ads in {product_category} category, "
+        f"{duration_sec}s videos. Use all available tools: search_trending_formats, "
+        f"search_ugc_references, search_creative_benchmarks, search_ai_generation_specs."
+    )
+    messages: list[dict] = [{"role": "user", "content": research_prompt}]
+    collected: list[str] = []
+    target_tools = {"search_trending_formats", "search_ugc_references",
+                    "search_creative_benchmarks", "search_ai_generation_specs"}
+
+    for tool_round in range(MAX_TOOL_ROUNDS):
+        print(f"[creative-agent] Research round {tool_round}...", flush=True)
+        resp = requests.post(
+            OPENROUTER_BASE_URL,
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": CLAUDE_MODEL, "messages": messages, "max_tokens": 500,
+                  "tools": CREATIVE_AGENT_TOOLS},
+            timeout=60,
+        )
+        if not resp.ok:
+            print(f"[creative-agent] Research API error {resp.status_code}: {resp.text[:300]}", flush=True)
+            break
+        response_data = resp.json()
+        message = response_data["choices"][0]["message"]
+        stop_reason = response_data["choices"][0].get("finish_reason", "stop")
+        tool_calls = message.get("tool_calls", [])
+
+        if not tool_calls or stop_reason == "stop":
+            break
+
+        print(f"[creative-agent] Tools: {[tc['function']['name'] for tc in tool_calls]}", flush=True)
+        assistant_msg: dict = {"role": "assistant", "content": message.get("content")}
+        assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        tool_results = []
+        called_names: set[str] = set()
+        for tc in tool_calls:
+            tool_name = tc["function"]["name"]
+            tool_input = json.loads(tc["function"]["arguments"])
+            print(f"[creative-agent]   → {tool_name}", flush=True)
+            result_text = _dispatch_tool(tool_name, tool_input)
+            collected.append(f"[{tool_name}]\n{result_text}")
+            called_names.add(tool_name)
+            tool_results.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
+
+        messages.extend(tool_results)
+        time.sleep(1)
+
+        if called_names >= target_tools:
+            break
+
+    return "\n\n".join(collected) if collected else ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_creative_agent(
@@ -355,149 +419,30 @@ def run_creative_agent(
     product_category: str = "",
 ) -> CreativeBriefOutput:
     """
-    Agentic creative brief: Claude researches trending formats, UGC styles, and benchmarks
-    via Perplexity tools, then generates production-ready creative briefs.
-    Returns same CreativeBriefOutput schema as before.
+    Phase 1: Agent researches trending formats, UGC styles, benchmarks, AI generation specs.
+    Phase 2: Structured Claude call generates schema-compliant CreativeBriefOutput using research.
     """
-    print("[creative-agent] Starting agentic creative brief loop...", flush=True)
+    print("[creative-agent] Phase 1: Research...", flush=True)
+    live_research = _run_creative_research(platform, product_category, duration_sec)
+    print(f"[creative-agent] Research complete: {len(live_research)} chars", flush=True)
 
-    user_prompt = f"""\
-Write a {platform} video creative brief for: {product_description}
-Category: {product_category} | Duration: {duration_sec}s
+    print("[creative-agent] Phase 2: Structured creative brief generation...", flush=True)
+    from marketing_factory.prompts import _claude_with_validation, CREATIVE_SYSTEM, _build_creative_user_prompt
 
-VOC INTELLIGENCE (speak this language, address these pains):
-{voc_brief}
+    base_prompt = _build_creative_user_prompt(
+        product_description, platform, voc_brief, top_copy, duration_sec, journey_context
+    )
+    enhanced_prompt = (
+        f"{base_prompt}\n\n"
+        f"LIVE CREATIVE RESEARCH (use these real findings for your concepts):\n"
+        f"{live_research[:3000]}"
+    ) if live_research else base_prompt
 
-TOP PERFORMING COPY (build primary concept around this):
-Hook: {top_copy.hook}
-Body: {top_copy.body}
-CTA: {top_copy.cta}
-Hook type: {top_copy.hook_type}
-Ad angle: {top_copy.ad_angle}
-
-CUSTOMER JOURNEY CONTEXT (which stage each concept targets):
-{journey_context}
-
-START by using your research tools to find:
-1. Trending creative formats on {platform} for this category
-2. Successful UGC styles that convert
-3. Real performance benchmarks
-4. AI generation techniques for authentic-looking content
-
-Then generate 2-3 distinct creative concepts grounded in actual creative intelligence.
-Return the final JSON output after your research.\
-"""
-
-    messages: list[dict] = [
-        {"role": "user", "content": user_prompt}
-    ]
-
-    tool_round = 0
-    final_json_str: Optional[str] = None
-
-    while tool_round <= MAX_TOOL_ROUNDS:
-        print(f"[creative-agent] API call (round {tool_round})...", flush=True)
-
-        payload = {
-            "model": CLAUDE_MODEL,
-            "messages": messages,
-            "max_tokens": MAX_TOKENS,
-            "tools": CREATIVE_AGENT_TOOLS,
-        }
-        if tool_round >= MAX_TOOL_ROUNDS:
-            payload.pop("tools", None)
-            payload["response_format"] = {"type": "json_object"}
-
-        resp = requests.post(
-            OPENROUTER_BASE_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=120,
-        )
-        resp.raise_for_status()
-        response_data = resp.json()
-        message = response_data["choices"][0]["message"]
-        stop_reason = response_data["choices"][0].get("finish_reason", "stop")
-
-        messages.append({"role": "assistant", "content": message.get("content") or ""})
-
-        tool_calls = message.get("tool_calls", [])
-
-        if not tool_calls or stop_reason == "stop":
-            content = message.get("content", "")
-            if isinstance(content, list):
-                content = " ".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                )
-            final_json_str = content
-            print(f"[creative-agent] Agent finished after {tool_round} tool rounds", flush=True)
-            break
-
-        print(f"[creative-agent] Tool calls: {[tc['function']['name'] for tc in tool_calls]}", flush=True)
-        tool_results = []
-        for tc in tool_calls:
-            tool_name = tc["function"]["name"]
-            tool_input = json.loads(tc["function"]["arguments"])
-            print(f"[creative-agent]   → {tool_name}({list(tool_input.values())})", flush=True)
-            result_text = _dispatch_tool(tool_name, tool_input)
-            tool_results.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result_text,
-            })
-
-        messages.extend(tool_results)
-        tool_round += 1
-
-        if tool_round <= MAX_TOOL_ROUNDS:
-            time.sleep(1)
-
-    return _parse_creative_output(final_json_str, platform, duration_sec)
-
-
-def _parse_creative_output(
-    raw: Optional[str], platform: str, duration_sec: int
-) -> CreativeBriefOutput:
-    from pydantic import ValidationError
-
-    if not raw:
-        raise RuntimeError("Creative agent returned empty response")
-
-    content = raw.strip()
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-
-    start = content.find("{")
-    end = content.rfind("}") + 1
-    if start >= 0 and end > start:
-        content = content[start:end]
-
-    try:
-        data = json.loads(content)
-        result = CreativeBriefOutput.model_validate(data)
-        print("[creative-agent] ✓ Output validated", flush=True)
-        return result
-    except (json.JSONDecodeError, ValidationError) as e:
-        print(f"[creative-agent] Parse error: {e} — falling back", flush=True)
-        return _fallback_creative_generation(raw, platform, duration_sec)
-
-
-def _fallback_creative_generation(
-    context: str, platform: str, duration_sec: int
-) -> CreativeBriefOutput:
-    from marketing_factory.prompts import _claude_with_validation, CREATIVE_SYSTEM
-    print("[creative-agent] Falling back to direct Claude call...", flush=True)
     return _claude_with_validation(
         system_prompt=CREATIVE_SYSTEM,
-        user_prompt=(
-            f"Based on this research context, generate the creative brief JSON "
-            f"for {platform} {duration_sec}s video:\n\n{context[:3000]}"
-        ),
-        schema_name="creative_fallback",
+        user_prompt=enhanced_prompt,
+        schema_name="creative_agent",
         pydantic_model=CreativeBriefOutput,
     )
+
+

@@ -40,18 +40,19 @@ from task_manager.db import (
     init_db, add_task, get_tasks, get_todays_report_tasks,
     mark_done, delete_task, set_vacation, list_vacations,
     cancel_vacation, is_vacation_today, get_task,
+    get_today_plan, set_today, clear_today_plan,
 )
 from task_manager.date_parser import parse_date, is_urgent, date_to_iso
 from task_manager.formatter import (
     morning_report, project_report, full_list_report,
-    task_added_confirm,
+    task_added_confirm, day_plan_report,
 )
 
 try:
-    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    from config import TASK_BOT_TOKEN as TELEGRAM_BOT_TOKEN, TASK_CHAT_ID as TELEGRAM_CHAT_ID
 except ImportError:
-    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    TELEGRAM_CHAT_ID   = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
+    TELEGRAM_BOT_TOKEN = os.environ.get("TASK_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID   = int(os.environ.get("TASK_CHAT_ID", "1873549647"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,10 +106,19 @@ _EXTRACT_TOOL = {
 }
 
 _SYSTEM_PROMPT = """\
-Ты помощник строительного прораба. Из сообщения пользователя извлекай задачи и вызывай save_tasks.
-Каждая отдельная задача — отдельный объект. Проект = числовой код ('76', '331' и т.д.).
-Если проект не упомянут — используй последний упомянутый в сообщении.
+Ты личный ассистент руководителя. Из сообщения извлекай задачи и вызывай save_tasks.
+Каждая отдельная задача — отдельный объект в массиве tasks.
+
+Категории проекта (project) — ТОЛЬКО одно из четырёх:
+  "Объекты"         — строительные объекты, выезды на стройки
+  "Офис"            — офисные дела, документы, переговоры, звонки
+  "Программирование" — IT задачи, разработка, серверы, боты
+  "Личное"          — личные дела, семья, покупки, здоровье
+
+Если задача относится к конкретному объекту — добавь номер: "Объекты/76", "Объекты/331".
+Если проект не упомянут явно — определи по смыслу из списка выше.
 date_str — сохраняй точно как сказал пользователь, не переводи в дату.
+priority="high" если слова: срочно, важно, сегодня, горит, нельзя откладывать.
 Вызывай ТОЛЬКО инструмент, без пояснений."""
 
 
@@ -154,6 +164,8 @@ _RE_VACATION_LIST   = re.compile(r"^отпуск\s+(список|list)$", re.I)
 _TODAY_WORDS = {"сегодня", "today", "report", "отчёт", "отчет"}
 _LIST_WORDS  = {"список", "все", "list", "all", "задачи"}
 _HELP_WORDS  = {"помощь", "help", "/help", "команды"}
+_PLAN_WORDS  = {"план", "план сегодня", "мой план", "план на день"}
+_RE_PLAN_SET = re.compile(r"^план\s+([\d,\s]+)$", re.I)  # план 1,3,5
 
 
 def _is_authorized(update: Update) -> bool:
@@ -188,6 +200,29 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if low in _LIST_WORDS:
         tasks = get_tasks()
         await _reply(update, full_list_report(tasks))
+        return
+
+    # ── план — показать дневной план ──────────────────────────────────────
+    if low in _PLAN_WORDS:
+        tasks = get_today_plan()
+        await _reply(update, day_plan_report(tasks))
+        return
+
+    # ── план 1,3,5 — установить план (по ID задач) ────────────────────────
+    m = _RE_PLAN_SET.match(low)
+    if m:
+        ids = [int(x.strip()) for x in m.group(1).replace(",", " ").split() if x.strip().isdigit()]
+        clear_today_plan()
+        ok, fail = [], []
+        for tid in ids:
+            if set_today(tid, True):
+                ok.append(tid)
+            else:
+                fail.append(tid)
+        msg = "✅ В план на сегодня: " + ", ".join(f"#{i}" for i in ok)
+        if fail:
+            msg += "\n❌ Не найдено: " + ", ".join(f"#{i}" for i in fail)
+        await _reply(update, msg)
         return
 
     # ── по 76 ─────────────────────────────────────────────────────────────
@@ -299,26 +334,32 @@ async def handle_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 HELP_TEXT = """\
-📋 <b>Команды планировщика</b>
+📋 <b>Мой планировщик</b>
 
-<b>Добавить задачи</b> — просто напиши:
-<code>по 76: договор с Ивановым до 20 апреля, срочно заказать материалы</code>
+<b>Категории:</b>  🏗 Объекты  |  🏢 Офис  |  💻 Программирование  |  👤 Личное
+
+<b>Добавить задачи</b> — просто напиши свободным текстом:
+<code>по объекту 76 договор с Ивановым до 20 апреля</code>
+<code>офис: позвонить бухгалтеру, срочно отправить счёт</code>
 
 <b>Посмотреть</b>
-<code>сегодня</code> — отчёт на сегодня
-<code>список</code> — все открытые задачи
-<code>по 76</code> — задачи проекта 76
+<code>сегодня</code> — утренний отчёт
+<code>список</code> — все задачи по категориям
+<code>план</code> — план на сегодня
+<code>по Офис</code> — задачи одной категории
+
+<b>Установить план</b>
+<code>план 3,7,12</code> — взять задачи #3 #7 #12 на сегодня
 
 <b>Закрыть / удалить</b>
 <code>сделано 42</code> — закрыть задачу #42
 <code>удали 42</code> — удалить задачу #42
 
 <b>Отпуск</b>
-<code>отпуск с 1 мая по 10 мая</code> — нет уведомлений в эти дни
-<code>отпуск список</code> — показать отпуска
-<code>отпуск отмена</code> — отменить ближайший
+<code>отпуск с 1 мая по 10 мая</code>
+<code>отпуск список</code> / <code>отпуск отмена</code>
 
-<i>ID задачи указан в конце строки как #42</i>"""
+<i>💡 Задачи удобнее добавлять через Claude — просто надиктуй</i>"""
 
 
 def main():

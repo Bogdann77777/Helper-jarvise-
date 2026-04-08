@@ -35,7 +35,7 @@ def main():
     if not tasks:
         return
 
-    from tg_send import tg_msg
+    from task_manager.tg import tg_task_msg
     sent_any = False
 
     for task in tasks:
@@ -50,7 +50,7 @@ def main():
             continue
 
         msg = urgent_alert(task, sent_count=count + 1)
-        ok  = tg_msg(msg)
+        ok  = tg_task_msg(msg)
         if ok:
             increment_urgent_alert(tid)
             sent_any = True
